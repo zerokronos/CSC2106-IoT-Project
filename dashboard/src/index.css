@@ -1,0 +1,49 @@
+/* ── RESET & TOKENS ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #0a0f1a;
+  --surface:      #111827;
+  --surface2:     #1a2235;
+  --border:       #1f2f4a;
+  --accent-wifi:  #00d4ff;
+  --accent-lora:  #f97316;
+  --accent-alert: #ef4444;
+  --accent-ok:    #22c55e;
+  --accent-warn:  #eab308;
+  --text:         #e2e8f0;
+  --text-muted:   #64748b;
+  --text-dim:     #334155;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'DM Sans', sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* scanline overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 2px,
+    rgba(0,212,255,0.015) 2px, rgba(0,212,255,0.015) 4px
+  );
+  pointer-events: none;
+  z-index: 1000;
+}
+
+@keyframes pulse-dot {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%      { opacity:0.4; transform:scale(0.7); }
+}
+@keyframes slideIn {
+  from { opacity:0; transform:translateY(-6px); }
+  to   { opacity:1; transform:translateY(0); }
+}
