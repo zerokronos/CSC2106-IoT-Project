@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CSC2106 Dashboard MVP</title>
+  <link rel="stylesheet" href="/dashboard/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>CSC2106 Local Dashboard</h1>
+    <p id="conn-status">Connecting to bridge stream...</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Node Status</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>node_id</th>
+            <th>mode</th>
+            <th>status</th>
+            <th>last_seen</th>
+            <th>temp_c</th>
+            <th>smoke</th>
+            <th>current_alert</th>
+          </tr>
+        </thead>
+        <tbody id="nodes-body"></tbody>
+      </table>
+    </section>
+
+    <section class="grid">
+      <section class="panel">
+        <h2>Neighbor Comparison</h2>
+        <p>Flats monitored: flat01, flat02, flat03</p>
+        <table>
+          <thead>
+            <tr>
+              <th>flat</th>
+              <th>temp_c</th>
+              <th>slope</th>
+              <th>neighbor_mean</th>
+              <th>anomaly</th>
+            </tr>
+          </thead>
+          <tbody id="neighbor-body"></tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Alerts (latest 50)</h2>
+        <ul id="alerts-feed"></ul>
+      </section>
+    </section>
+  </main>
+
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>
