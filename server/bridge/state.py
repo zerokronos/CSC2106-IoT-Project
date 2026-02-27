@@ -16,11 +16,16 @@ class StateStore:
     def apply_message(self, topic: str, payload: dict[str, Any]) -> None:
         node_id = payload.get("node_id") or topic.rsplit("/", 1)[-1]
         status = payload.get("status") or "unknown"
+        is_alert = "/alert/" in topic
+        is_telemetry = "/telemetry/" in topic or "/heartbeat/" in topic
+        mode = payload.get("mode")
 
         with self._lock:
             node = self._nodes.get(node_id, {
                 "node_id": node_id,
-                "mode": payload.get("mode", ""),
+                "mode": "",
+                "last_telemetry_mode": "",
+                "last_alert_mode": "",
                 "status": status,
                 "last_seen": payload.get("ts", ""),
                 "temp_c": payload.get("temp_c"),
@@ -28,13 +33,20 @@ class StateStore:
                 "current_alert": "",
             })
 
-            node["mode"] = payload.get("mode", node.get("mode", ""))
+            if is_telemetry and mode:
+                node["last_telemetry_mode"] = mode
+                node["mode"] = mode
+            elif is_alert and mode:
+                node["last_alert_mode"] = mode
+                if not node.get("mode"):
+                    node["mode"] = mode
+
             node["status"] = status
             node["last_seen"] = payload.get("ts", node.get("last_seen", ""))
             node["temp_c"] = payload.get("temp_c", node.get("temp_c"))
             node["smoke"] = payload.get("smoke", node.get("smoke"))
 
-            if "/alert/" in topic:
+            if is_alert:
                 reason = payload.get("reason") or payload.get("severity") or "alert"
                 node["current_alert"] = str(reason)
 

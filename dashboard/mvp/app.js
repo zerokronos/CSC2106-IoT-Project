@@ -22,6 +22,15 @@ const severityClass = (value) => {
   return "ok";
 };
 
+const isActiveAlert = (value) => value && value !== "-";
+
+const effectiveMode = (node) => {
+  if (isActiveAlert(node.current_alert) && node.last_alert_mode) {
+    return node.last_alert_mode;
+  }
+  return node.last_telemetry_mode || node.mode || "-";
+};
+
 const fmt = (value, digits = 2) => {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
     return "-";
@@ -83,7 +92,7 @@ function renderNodes() {
       (n) => `
       <tr>
         <td>${n.node_id || "-"}</td>
-        <td>${n.mode || "-"}</td>
+        <td>${effectiveMode(n)}</td>
         <td><span class="tag ${severityClass(n.status)}">${n.status || "-"}</span></td>
         <td>${n.last_seen || "-"}</td>
         <td>${fmt(n.temp_c, 2)}</td>
@@ -144,10 +153,14 @@ function renderNeighbors() {
 
 function applyMessage(topic, payload) {
   if (!payload || !payload.node_id) return;
+  const isAlert = topic.includes("/alert/");
+  const isTelemetry = topic.includes("/telemetry/") || topic.includes("/heartbeat/");
 
   const prev = nodes.get(payload.node_id) || {
     node_id: payload.node_id,
-    mode: payload.mode || "",
+    mode: "",
+    last_telemetry_mode: "",
+    last_alert_mode: "",
     status: "unknown",
     last_seen: "",
     temp_c: null,
@@ -161,15 +174,25 @@ function applyMessage(topic, payload) {
     status: payload.status || prev.status,
     last_seen: payload.ts || prev.last_seen,
     current_alert:
-      topic.includes("/alert/")
+      isAlert
         ? payload.reason || payload.severity || "alert"
         : prev.current_alert,
   };
 
+  if (isTelemetry && payload.mode) {
+    next.last_telemetry_mode = payload.mode;
+    next.mode = payload.mode;
+  } else if (isAlert && payload.mode) {
+    next.last_alert_mode = payload.mode;
+    next.mode = prev.mode || prev.last_telemetry_mode || payload.mode;
+  } else {
+    next.mode = prev.mode || prev.last_telemetry_mode || payload.mode || "";
+  }
+
   nodes.set(payload.node_id, next);
   updateHistory(payload.node_id, payload.temp_c);
 
-  if (topic.includes("/alert/")) {
+  if (isAlert) {
     alerts.unshift({
       node_id: payload.node_id,
       ts: payload.ts,
@@ -186,7 +209,13 @@ function applyMessage(topic, payload) {
 
 function applySnapshot(snapshot) {
   (snapshot.nodes || []).forEach((n) => {
-    nodes.set(n.node_id, n);
+    const mode = n.mode || "";
+    nodes.set(n.node_id, {
+      ...n,
+      mode,
+      last_telemetry_mode: n.last_telemetry_mode || mode,
+      last_alert_mode: n.last_alert_mode || "",
+    });
     updateHistory(n.node_id, n.temp_c);
   });
 
