@@ -29,36 +29,36 @@ Open `http://localhost:5173` in your browser.
 #Raspberry Pi Setup
 
 1. Install Required
-sudo apt update
-sudo apt install nodejs npm -y
-sudo apt install mosquitto mosquitto-clients -y
+`sudo apt update`
+`sudo apt install nodejs npm -y`
+`sudo apt install mosquitto mosquitto-clients -y`
 
 2. Configure Mosquitto
-sudo nano /etc/mosquitto/conf.d/websockets.conf
+`sudo nano /etc/mosquitto/conf.d/websockets.conf`
 
 Add the following into your websockets.conmf:
-listener 1883
+`listener 1883
 listener 9001
 protocol websockets
-allow_anonymous true
+allow_anonymous true`
 
 3. Restart Mosquito
-sudo systemctl restart mosquitto
+`sudo systemctl restart mosquitto`
 
 4. SCP dashboard files into Raspberry Pi
-scp (files location) (piusername)@(piaddress):(locationtosaveto)
+`scp (files location) (piusername)@(piaddress):(locationtosaveto)`
 
 5. Navigate to dashboard folder
-cd (location)
+`cd (location)`
 
 6. Delete existing node modules (skip this step if scp from clean copy which has not run npm install on a different operating system)
-rm -rf node_modules
+`rm -rf node_modules`
 
 7. Install Node modules
-npm install
+`npm install`
 
 8. Run Dashboard
-npm run dev
+`npm run dev`
 
 
 # Pico W Setup
