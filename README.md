@@ -60,12 +60,15 @@ allow_anonymous true`
 8. Run Dashboard
 `npm run dev`
 
+9. For MQTT receive verification
+`mosquitto_sub -h localhost -t "#" -v`
 
 # Pico W Setup
 1. Open up wifi folder and edit wifi-mqtt.py
 2. Change WIFI_SSID to the wifi name of the wifi being used
 3. Change WIFI_PASS to the password of the wifi being used
 4. Change MQTT_BROKER to Raspberry Pi's IP Address
+5. Run code in thorny and observe
 
 # Local PC Connect to Dashboard
 1. Connect to wifi network that devices are used
