@@ -5,15 +5,26 @@ import {
 } from '../utils/simulator'
 
 // ─── TOGGLE THIS when the real broker is ready ───────────────────────────────
-const USE_REAL_MQTT   = false
-const MQTT_BROKER_URL = 'ws://192.168.1.x:9001'   // <- set broker IP here
+const USE_REAL_MQTT   = true
+const MQTT_BROKER_URL = `ws://${window.location.hostname}:9001` // Dynamically use the Pi's IP
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_HISTORY = 60
 const MAX_ALERTS  = 30
 
 export function useDashboard() {
-  const [nodes,   setNodes]   = useState(makeInitialNodes)
+  const [nodes,   setNodes]   = useState(() => {
+    const n = makeInitialNodes()
+
+    // In real mode, start offline until we hear from the device
+    if (USE_REAL_MQTT) {
+      Object.keys(n).forEach(id => {
+        n[id].online = false
+        n[id].mode = 'offline'
+      })
+    }
+    return n
+  })
   const [history, setHistory] = useState(() => {
     const h = {}
     NODE_IDS.forEach(id => { h[id] = [] })
@@ -32,13 +43,15 @@ export function useDashboard() {
   // ── append history helper ──────────────────────────────────────────────────
   const appendHistory = useCallback((updatedNodes) => {
     setHistory(prev => {
-      const next = { ...prev }
+      const next      = { ...prev }
+      const timestamp = USE_REAL_MQTT ? Date.now() : tickRef.current
+
       NODE_IDS.forEach(id => {
         const n = updatedNodes[id]
         if (!n.online) return
         next[id] = [
           ...prev[id],
-          { t: tickRef.current, temp: n.temp, smoke: n.smoke },
+          { t: timestamp, temp: n.temp, smoke: n.smoke },
         ].slice(-MAX_HISTORY)
       })
       return next
@@ -72,7 +85,6 @@ export function useDashboard() {
     const interval = setInterval(() => {
       setNodes(prev => {
         const { nodes: next, newAlerts } = simulateTick(prev, tickRef)
-        appendHistory(next)
         pushAlerts(newAlerts)
         return next
       })
@@ -86,7 +98,8 @@ export function useDashboard() {
     if (!USE_REAL_MQTT) return
 
     // dynamic import so mqtt doesn't get bundled unless needed
-    import('mqtt').then(({ connect }) => {
+    import('mqtt').then((mqtt) => {
+      const connect = mqtt.connect || mqtt.default?.connect
       const client = connect(MQTT_BROKER_URL)
       mqttRef.current = client
 
@@ -104,9 +117,8 @@ export function useDashboard() {
 
           if (topic.startsWith('telemetry/')) {
             setNodes(prev => {
-              const n = { ...prev[data.id], ...data, lastSeen: Date.now() }
+              const n = { ...prev[data.id], ...data, online: true, lastSeen: Date.now() }
               n.alertActive = n.temp > TEMP_ALARM || n.smoke > SMOKE_ALARM
-              appendHistory({ ...prev, [data.id]: n })
               return { ...prev, [data.id]: n }
             })
           }
@@ -117,6 +129,15 @@ export function useDashboard() {
               msg:  raw.msg      ?? `Alert from ${data.id}`,
               time: new Date().toLocaleTimeString(),
             }])
+          }
+
+          if (topic.startsWith('heartbeat/')) {
+            setNodes(prev => {
+              if (!prev[data.id]) return prev
+              // Update lastSeen to keep the node "online" (green dot)
+              const n = { ...prev[data.id], lastSeen: Date.now(), online: true, mode: data.mode || 'wifi' }
+              return { ...prev, [data.id]: n }
+            })
           }
         } catch (e) {
           console.error('MQTT parse error', e)
@@ -130,6 +151,17 @@ export function useDashboard() {
 
     return () => mqttRef.current?.end()
   }, [appendHistory, pushAlerts])
+
+  // ── EFFECT for HISTORY ─────────────────────────────────────────────────────
+  const isInitialMount = useRef(true)
+  useEffect(() => {
+    // Skip the initial render to prevent duplicate history on mount
+    if (isInitialMount.current) {
+      isInitialMount.current = false
+    } else {
+      appendHistory(nodes)
+    }
+  }, [nodes, appendHistory])
 
   // ── FAILOVER SIMULATION (demo button) ─────────────────────────────────────
   const [failoverActive, setFailoverActive] = useState(false)
@@ -172,6 +204,29 @@ export function useDashboard() {
       }, delay)
     })
   }, [pushAlerts])
+
+  // ── WATCHDOG: Mark nodes offline if no heartbeat for 60s ───────────────────
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNodes(prev => {
+        const now = Date.now()
+        let changed = false
+        const next = { ...prev }
+
+        Object.keys(next).forEach(id => {
+          const node = next[id]
+          // If online and hasn't been seen in 60s (2 missed heartbeats)
+          if (node.online && node.lastSeen && (now - node.lastSeen > 60000)) {
+            next[id] = { ...node, online: false }
+            changed = true
+          }
+        })
+        return changed ? next : prev
+      })
+    }, 5000) // Run check every 5 seconds
+
+    return () => clearInterval(interval)
+  }, [])
 
   return {
     nodes, history, alerts,
