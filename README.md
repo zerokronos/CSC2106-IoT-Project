@@ -38,7 +38,7 @@ sudo apt install mosquitto mosquitto-clients -y
 3. Configure Mosquitto
 `sudo nano /etc/mosquitto/conf.d/websockets.conf`
 
-Add the following into your websockets.conmf:
+Add the following into your websockets.conf:
 ```listener 1883
 listener 9001
 protocol websockets
