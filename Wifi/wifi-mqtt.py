@@ -15,17 +15,17 @@ except ImportError:
     TEST_DATA_AVAILABLE = False
 
 # --- 1. CONFIGURATION ---
-WIFI_SSID = "Travis's A55 5G"
-WIFI_PASS = "Welcome@2025"
-MQTT_BROKER = "10.142.0.31"  # <-- USE YOUR PI's IP ADDRESS
+WIFI_SSID = "changethis"
+WIFI_PASS = "changethis"
+MQTT_BROKER = "changethis"  # <-- USE YOUR PI's IP ADDRESS
 NODE_ID = "flat02"  # <-- CHANGE THIS FOR EACH FLAT (flat01, flat02, flat03, etc.)
 CLIENT_ID = ubinascii.hexlify(machine.unique_id()) # Unique ID for this Pico
 TOPIC_TELEMETRY = b"telemetry/site1/" + NODE_ID.encode() # Main data channel
 TOPIC_HEARTBEAT = b"heartbeat/site1/" + NODE_ID.encode()
-HEARTBEAT_INTERVAL = 3 # Seconds between keep-alive signals
+HEARTBEAT_INTERVAL = 10 # Seconds between keep-alive signals
 MAX_RETRIES = 3
 SIMULATION_MODE = True  # Set to False when Arduino is connected
-SIMULATION_INTERVAL = 2  # Send simulated data every N seconds
+SIMULATION_INTERVAL = 10  # Send simulated data every N seconds
 
 # --- 2. HARDWARE SETUP ---
 # UART 0: TX=GP0, RX=GP1 (9600 baud to match Arduino)
