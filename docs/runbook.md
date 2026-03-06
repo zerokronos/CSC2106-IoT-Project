@@ -88,7 +88,7 @@ TTN Console steps for a Custom webhook:
 - Select `Custom webhook`.
 - Set `Webhook ID` to a stable name such as `csc2106-bridge-ngrok`.
 - Set `Webhook format` to `JSON`.
-- Set `Base URL` to the exact ngrok endpoint printed by `./scripts/ttn_ngrok_start.sh`, for example `https://example.ngrok-free.app/ttn/uplink`.
+- Set `Base URL` to the exact ngrok endpoint printed by `./scripts/ttn_ngrok_start.sh`, for example `<NGROK_HTTPS_URL>/ttn/uplink`.
 - In `Enabled event types`, enable `Uplink message`.
 - Save the webhook.
 
@@ -114,6 +114,47 @@ cd server/bridge
 [[ -f /tmp/csc2106_ngrok.pid ]] && kill "$(cat /tmp/csc2106_ngrok.pid)" 2>/dev/null || true
 rm -f /tmp/csc2106_ngrok.pid /tmp/csc2106_ngrok_url.txt
 ```
+
+## LoRaWAN Fallback (WisGate + TTN) — Status: Verified
+
+Architecture overview:
+- `UNO -> WisGate -> TTN -> webhook -> ngrok -> bridge -> MQTT -> dashboard`
+
+Radio/network settings:
+- Frequency plan: `AU915 FSB2`
+
+Payload contract:
+- 7-byte uplink matching the bridge decoder in `server/bridge/ttn_decoder.py`
+- `byte0=node_id`
+- `byte1=msg_type`
+- `byte2-3=temp_x10` (big-endian unsigned integer)
+- `byte4-5=smoke_x100` (big-endian unsigned integer)
+- `byte6=severity`
+
+Run the verified local pipeline from repo root:
+
+```bash
+server/bridge/scripts/mqtt_status.sh
+server/bridge/scripts/bridge_start.sh
+server/bridge/scripts/ttn_ngrok_start.sh
+server/bridge/scripts/ttn_webhook_verify.sh
+```
+
+TTN Console steps:
+- Create a `Custom webhook`.
+- Set `Base URL` to `<NGROK_HTTPS_URL>/ttn/uplink`.
+- Enable `Uplink message` events.
+
+Known gotchas:
+- The ngrok domain must match exactly. Do not mix `.dev`, `.app`, or any stale ngrok hostname.
+- TTN `DevEUI` must match the device `DevEUI` exactly.
+- `mosquitto` may already be running on port `1883`.
+
+### Evidence
+- Capture a TTN Live Data screenshot and save it as `docs/figures/ttn-live-data-lorawan-fallback.png`.
+- Capture the bridge log showing `POST /ttn/uplink 200 OK` and save it as `docs/figures/bridge-log-ttn-uplink-200.txt`.
+- Capture a dashboard screenshot showing `mode=lorawan` and an alert state, and save it as `docs/figures/dashboard-lorawan-alert.png`.
+- Do not include secrets in screenshots or logs. Use placeholders for `AppKey`, session keys, ngrok auth tokens, or any other credentials.
 
 ## 4) Run simulator (new terminal)
 

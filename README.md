@@ -14,6 +14,48 @@
 - `docs/`: Working documentation for topics, schemas, and experiment logs.
 - `docs/figures/`: Diagrams and images referenced by documentation.
 
+## LoRaWAN Fallback (WisGate + TTN) — Status: Verified
+
+Architecture overview:
+- `UNO -> WisGate -> TTN -> webhook -> ngrok -> bridge -> MQTT -> dashboard`
+
+Radio/network settings:
+- Frequency plan: `AU915 FSB2`
+
+Payload contract:
+- 7-byte uplink matching the bridge decoder in `server/bridge/ttn_decoder.py`
+- `byte0=node_id`
+- `byte1=msg_type`
+- `byte2-3=temp_x10` (big-endian unsigned integer)
+- `byte4-5=smoke_x100` (big-endian unsigned integer)
+- `byte6=severity`
+
+Run the local pipeline from repo root:
+
+```bash
+server/bridge/scripts/mqtt_status.sh
+server/bridge/scripts/bridge_start.sh
+server/bridge/scripts/ttn_ngrok_start.sh
+server/bridge/scripts/ttn_webhook_verify.sh
+```
+
+TTN Console steps:
+- Create a `Custom webhook`.
+- Set `Base URL` to `<NGROK_HTTPS_URL>/ttn/uplink`.
+- Enable `Uplink message` events.
+
+Known gotchas:
+- The ngrok domain must match exactly. Do not mix `.dev`, `.app`, or any stale ngrok hostname.
+- TTN `DevEUI` must match the device `DevEUI` exactly.
+- `mosquitto` may already be running on port `1883`.
+
+Evidence to capture under `docs/figures/`:
+- `ttn-live-data-lorawan-fallback.png`
+- `bridge-log-ttn-uplink-200.txt`
+- `dashboard-lorawan-alert.png`
+
+For the full operator runbook, evidence checklist, and local verification steps, see `docs/runbook.md`.
+
 ## Dashboard Setup
 
 ```bash
