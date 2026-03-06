@@ -13,26 +13,22 @@ const MAX_HISTORY = 60
 const MAX_ALERTS  = 30
 
 export function useDashboard() {
-  const [nodes,   setNodes]   = useState(() => {
-    const n = makeInitialNodes()
-
-    // In real mode, start offline until we hear from the device
-    if (USE_REAL_MQTT) {
-      Object.keys(n).forEach(id => {
-        n[id].online = false
-        n[id].mode = 'offline'
-      })
-    }
-    return n
-  })
-  const [history, setHistory] = useState(() => {
-    const h = {}
-    NODE_IDS.forEach(id => { h[id] = [] })
-    return h
-  })
+  const [nodes,   setNodes]   = useState(() => (USE_REAL_MQTT ? {} : makeInitialNodes()))
+  const [history, setHistory] = useState(() => (USE_REAL_MQTT ? {} : Object.fromEntries(NODE_IDS.map(id => [id, []]))))
   const [alerts,  setAlerts]  = useState([])
   const tickRef   = useRef(0)
   const mqttRef   = useRef(null)
+
+  const makeNode = useCallback((id) => ({
+    id,
+    online: true,
+    mode: 'wifi',
+    temp: 0,
+    smoke: 0,
+    lastSeen: Date.now(),
+    alertActive: false,
+    fireDetected: false,
+  }), [])
 
   // ── push alert helper ──────────────────────────────────────────────────────
   const pushAlerts = useCallback((incoming) => {
@@ -46,11 +42,12 @@ export function useDashboard() {
       const next      = { ...prev }
       const timestamp = USE_REAL_MQTT ? Date.now() : tickRef.current
 
-      NODE_IDS.forEach(id => {
+      Object.keys(updatedNodes).forEach(id => {
         const n = updatedNodes[id]
         if (!n.online) return
+        const series = prev[id] ?? []
         next[id] = [
-          ...prev[id],
+          ...series,
           { t: timestamp, temp: n.temp, smoke: n.smoke },
         ].slice(-MAX_HISTORY)
       })
@@ -114,12 +111,67 @@ export function useDashboard() {
         try {
           const raw  = JSON.parse(payload.toString())
           const data = normalise(raw)
+          const topicId = topic.split('/').filter(Boolean).pop()
+          const id = data.id ?? topicId
+          if (!id) return
 
           if (topic.startsWith('telemetry/')) {
             setNodes(prev => {
-              const n = { ...prev[data.id], ...data, online: true, lastSeen: Date.now() }
-              n.alertActive = n.temp > TEMP_ALARM || n.smoke > SMOKE_ALARM
-              return { ...prev, [data.id]: n }
+              try {
+                const existing = prev[id] ?? makeNode(id)
+                const nextNode = {
+                  ...existing,
+                  ...data,
+                  online: true,
+                  mode: data.mode ?? (existing.mode === 'offline' ? 'wifi' : (existing.mode ?? 'wifi')),
+                  lastSeen: Date.now(),
+                  fireDetected: Boolean(data.fireDetected),
+                }
+
+                // Independent breach detection
+                const tempVal = Number(nextNode.temp ?? 0)
+                const smokeVal = Number(nextNode.smoke ?? 0)
+                
+                const isTempAlert  = tempVal > TEMP_ALARM
+                const isSmokeAlert = smokeVal > SMOKE_ALARM
+                const isFireAlert  = nextNode.fireDetected
+
+                const wasTempAlert  = Number(existing.temp ?? 0) > TEMP_ALARM
+                const wasSmokeAlert = Number(existing.smoke ?? 0) > SMOKE_ALARM
+                const wasFireAlert  = existing.fireDetected
+
+                const wasAlert = existing.alertActive
+                nextNode.alertActive = isTempAlert || isSmokeAlert || isFireAlert
+
+                // Trigger alert if ANY threshold is newly crossed
+                if ((isTempAlert && !wasTempAlert) || (isSmokeAlert && !wasSmokeAlert) || (isFireAlert && !wasFireAlert)) {
+                  let cause = []
+                  if (isTempAlert && !wasTempAlert)   cause.push(`HIGH TEMP (${tempVal.toFixed(1)}°C)`)
+                  if (isSmokeAlert && !wasSmokeAlert) cause.push(`HIGH SMOKE (${smokeVal.toFixed(1)} PPM)`)
+                  if (isFireAlert && !wasFireAlert)   cause.push('FIRE DETECTED')
+
+                  const displayId = String(id).toUpperCase()
+                  pushAlerts([{
+                    sev: 'high',
+                    msg: `${displayId} FLAGGED: ${cause.join(' & ')}`,
+                    time: new Date().toLocaleTimeString(),
+                  }])
+                }
+
+                // Recovery detection
+                if (wasAlert && !nextNode.alertActive) {
+                  pushAlerts([{
+                    sev: 'info',
+                    msg: `${String(id).toUpperCase()}: RECOVERED — All thresholds nominal`,
+                    time: new Date().toLocaleTimeString(),
+                  }])
+                }
+
+                return { ...prev, [id]: nextNode }
+              } catch (err) {
+                console.error("Critical error updating node state:", err)
+                return prev
+              }
             })
           }
 
@@ -133,10 +185,14 @@ export function useDashboard() {
 
           if (topic.startsWith('heartbeat/')) {
             setNodes(prev => {
-              if (!prev[data.id]) return prev
-              // Update lastSeen to keep the node "online" (green dot)
-              const n = { ...prev[data.id], lastSeen: Date.now(), online: true, mode: data.mode || 'wifi' }
-              return { ...prev, [data.id]: n }
+              const existing = prev[id] ?? makeNode(id)
+              const n = {
+                ...existing,
+                lastSeen: Date.now(),
+                online: true,
+                mode: data.mode || (existing.mode === 'offline' ? 'wifi' : (existing.mode || 'wifi')),
+              }
+              return { ...prev, [id]: n }
             })
           }
         } catch (e) {
@@ -150,7 +206,7 @@ export function useDashboard() {
     })
 
     return () => mqttRef.current?.end()
-  }, [appendHistory, pushAlerts])
+  }, [appendHistory, makeNode, pushAlerts])
 
   // ── EFFECT for HISTORY ─────────────────────────────────────────────────────
   const isInitialMount = useRef(true)
@@ -208,6 +264,7 @@ export function useDashboard() {
   // ── WATCHDOG: Mark nodes offline if no heartbeat for 60s ───────────────────
   useEffect(() => {
     const interval = setInterval(() => {
+      const newlyOffline = []
       setNodes(prev => {
         const now = Date.now()
         let changed = false
@@ -217,16 +274,26 @@ export function useDashboard() {
           const node = next[id]
           // If online and hasn't been seen in 60s (2 missed heartbeats)
           if (node.online && node.lastSeen && (now - node.lastSeen > 60000)) {
-            next[id] = { ...node, online: false }
+            next[id] = { ...node, online: false, mode: 'offline' }
+            newlyOffline.push(id)
             changed = true
           }
         })
         return changed ? next : prev
       })
-    }, 5000) // Run check every 5 seconds
+
+      if (newlyOffline.length) {
+        const time = new Date().toLocaleTimeString()
+        pushAlerts(newlyOffline.map(id => ({
+          sev: 'med',
+          msg: `${id.toUpperCase()}: OFFLINE (no heartbeat > 60s)`,
+          time,
+        })))
+      }
+    }, 10000) // Run check every 10 seconds
 
     return () => clearInterval(interval)
-  }, [])
+  }, [pushAlerts])
 
   return {
     nodes, history, alerts,

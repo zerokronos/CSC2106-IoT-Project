@@ -1,5 +1,3 @@
-import { NODE_IDS } from '../utils/simulator'
-
 const card = (accentColor) => ({
   background: 'var(--surface)',
   border: '1px solid var(--border)',
@@ -15,13 +13,14 @@ const label  = { fontSize:11, color:'var(--text-muted)', fontFamily:'var(--mono)
 const sub    = { fontSize:11, color:'var(--text-muted)', marginTop:4 }
 
 export default function StatStrip({ nodes }) {
-  const online = NODE_IDS.filter(id => nodes[id].online)
-  const wifi   = online.filter(id => nodes[id].mode === 'wifi')
-  const lora   = online.filter(id => nodes[id].mode === 'lora')
-  const alerted= NODE_IDS.filter(id => nodes[id].alertActive)
+  const nodeIds = Object.keys(nodes)
+  const online = nodeIds.filter(id => nodes[id]?.online)
+  const wifi   = online.filter(id => nodes[id]?.mode === 'wifi')
+  const lora   = online.filter(id => nodes[id]?.mode === 'lora')
+  const alerted= nodeIds.filter(id => nodes[id]?.alertActive)
 
   const stats = [
-    { label:'NODES ONLINE',  value: online.length,  sub:'of 6 total nodes',       color:'var(--accent-ok)',    textColor:'var(--accent-ok)' },
+    { label:'NODES ONLINE',  value: online.length,  sub:`of ${nodeIds.length} discovered`, color:'var(--accent-ok)',    textColor:'var(--accent-ok)' },
     { label:'WiFi MODE',     value: wifi.length,    sub:'primary comms active',    color:'var(--accent-wifi)',  textColor:'var(--accent-wifi)' },
     { label:'LoRa FALLBACK', value: lora.length,    sub:'nodes in fallback mode',  color:'var(--accent-lora)',  textColor:'var(--accent-lora)' },
     { label:'ACTIVE ALERTS', value: alerted.length, sub:'threshold breaches',      color:'var(--accent-alert)', textColor:'var(--accent-alert)' },

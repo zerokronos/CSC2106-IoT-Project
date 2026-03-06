@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { NODE_IDS } from '../utils/simulator'
 
 const modeBadgeStyle = (mode) => {
   const map = {
@@ -28,6 +27,7 @@ const valColor = (val, warnThresh, alertThresh) => {
 
 export default function NodeList({ nodes }) {
   const [selected, setSelected] = useState(null)
+  const nodeIds = Object.keys(nodes).sort()
 
   return (
     <div style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
@@ -38,14 +38,21 @@ export default function NodeList({ nodes }) {
         fontSize:12, fontFamily:'var(--mono)', fontWeight:600, letterSpacing:'0.05em', color:'var(--text-muted)',
       }}>
         <span>FLAT NODES</span>
-        <span style={{ color:'var(--text)' }}>{NODE_IDS.length} nodes</span>
+        <span style={{ color:'var(--text)' }}>{nodeIds.length} node{nodeIds.length !== 1 ? 's' : ''}</span>
       </div>
 
-      {NODE_IDS.map((id, i) => {
+      {nodeIds.length === 0 && (
+        <div style={{ padding:20, textAlign:'center', color:'var(--text-dim)', fontFamily:'var(--mono)', fontSize:12 }}>
+          No flat node connected yet
+        </div>
+      )}
+
+      {nodeIds.map((id, i) => {
         const n    = nodes[id]
         const mode = n.online ? n.mode : 'offline'
-        const isLast = i === NODE_IDS.length - 1
+        const isLast = i === nodeIds.length - 1
         const isSel  = selected === id
+        const isAlert = n.alertActive && n.online
 
         return (
           <div
@@ -56,24 +63,28 @@ export default function NodeList({ nodes }) {
               borderBottom: isLast ? 'none' : '1px solid var(--border)',
               display:'flex', flexDirection:'column', gap:8,
               cursor:'pointer',
-              background: isSel ? 'var(--surface2)' : 'transparent',
+              background: isAlert ? 'rgba(239,68,68,0.1)' : isSel ? 'var(--surface2)' : 'transparent',
               transition:'background 0.15s',
               position:'relative',
             }}
           >
             {/* selected left bar */}
-            {isSel && (
+            {(isSel || isAlert) && (
               <div style={{
                 position:'absolute', left:0, top:0, bottom:0, width:3,
-                background:'var(--accent-wifi)', borderRadius:'0 2px 2px 0',
+                background: isAlert ? 'var(--accent-alert)' : 'var(--accent-wifi)', borderRadius:'0 2px 2px 0',
               }} />
             )}
 
             {/* top row */}
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-              <div style={{ fontFamily:'var(--mono)', fontWeight:700, fontSize:13, display:'flex', alignItems:'center', gap:8 }}>
+              <div style={{
+                fontFamily:'var(--mono)', fontWeight:700, fontSize:13,
+                display:'flex', alignItems:'center', gap:8,
+                color: isAlert ? 'var(--accent-alert)' : 'inherit'
+              }}>
                 <div style={{ width:8, height:8, borderRadius:'50%', ...dotColor(n) }} />
-                {id.toUpperCase()}
+                {String(id).toUpperCase()} {isAlert && '— ALARM'}
               </div>
               <div style={modeBadgeStyle(mode)}>{mode.toUpperCase()}</div>
             </div>
@@ -81,8 +92,9 @@ export default function NodeList({ nodes }) {
             {/* readings */}
             <div style={{ display:'flex', gap:16 }}>
               {[
-                { label:'TEMP',  val:`${n.temp.toFixed(1)}°C`,   color: valColor(n.temp,  35, 40) },
-                { label:'SMOKE', val: n.smoke.toFixed(3),         color: valColor(n.smoke, 0.4, 0.7) },
+                { label:'TEMP',  val:`${(n.temp || 0).toFixed(1)}°C`,   color: valColor(n.temp,  50, 57) },
+                { label:'SMOKE', val: `${(n.smoke || 0).toFixed(1)} PPM`, color: valColor(n.smoke, 60, 80) },
+                { label:'FIRE',  val: n.fireDetected ? 'DETECTED' : 'CLEAR', color: n.fireDetected ? 'var(--accent-alert)' : 'var(--accent-ok)' },
                 { label:'MODE',  val: mode,
                   color: mode==='wifi' ? 'var(--accent-wifi)' : mode==='lora' ? 'var(--accent-lora)' : 'var(--text-dim)' },
               ].map(r => (
@@ -95,6 +107,7 @@ export default function NodeList({ nodes }) {
 
             <div style={{ fontSize:10, color:'var(--text-dim)', fontFamily:'var(--mono)' }}>
               Last seen: {n.online ? 'just now' : 'offline'}
+              {!n.online ? ' · FLAGGED OUT' : ''}
             </div>
           </div>
         )

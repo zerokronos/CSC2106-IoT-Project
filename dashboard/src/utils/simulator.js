@@ -11,8 +11,8 @@ export const NODE_COLORS = {
 }
 
 export const ANOMALY_NODE = 'flat03'
-export const TEMP_ALARM   = 40
-export const SMOKE_ALARM  = 0.7
+export const TEMP_ALARM   = 57
+export const SMOKE_ALARM  = 80
 
 // ─── INITIAL STATE FACTORY ───────────────────────────────────────────────────
 export function makeInitialNodes() {
@@ -23,7 +23,7 @@ export function makeInitialNodes() {
       online:      true,
       mode:        'wifi',   // 'wifi' | 'lora' | 'offline'
       temp:        25 + Math.random() * 3,
-      smoke:       0.10 + Math.random() * 0.05,
+      smoke:       10 + Math.random() * 5,
       lastSeen:    Date.now(),
       alertActive: false,
     }
@@ -47,12 +47,12 @@ export function simulateTick(nodes, tickRef) {
 
     // temperature drift
     let delta = (Math.random() - 0.5) * 0.4 + baselineDrift * 0.05
-    if (id === ANOMALY_NODE && tick > 20) delta += 0.15   // anomaly trend
-    n.temp  = Math.max(20, Math.min(60, n.temp + delta))
+    if (id === ANOMALY_NODE && tick > 20) delta += 0.25   // anomaly trend (faster rise to 57)
+    n.temp  = Math.max(20, Math.min(80, n.temp + delta))
 
-    // smoke
-    n.smoke = Math.max(0, Math.min(1, n.smoke + (Math.random() - 0.5) * 0.02))
-    if (n.temp > 38) n.smoke = Math.min(1, n.smoke + 0.05)
+    // smoke (ppm range 0-120)
+    n.smoke = Math.max(0, Math.min(120, n.smoke + (Math.random() - 0.5) * 2))
+    if (n.temp > 50) n.smoke = Math.min(120, n.smoke + 5)
 
     // alerts
     const wasAlert  = n.alertActive
@@ -60,7 +60,7 @@ export function simulateTick(nodes, tickRef) {
     if (n.alertActive && !wasAlert) {
       newAlerts.push({
         sev:  'high',
-        msg:  `${id.toUpperCase()}: THRESHOLD BREACH — Temp ${n.temp.toFixed(1)}°C, Smoke ${n.smoke.toFixed(2)}`,
+        msg:  `${id.toUpperCase()} FLAGGED: Temp ${n.temp.toFixed(1)}°C, Smoke ${n.smoke.toFixed(1)} PPM`,
         time: new Date().toLocaleTimeString(),
       })
     }
@@ -89,11 +89,30 @@ export function simulateTick(nodes, tickRef) {
 // { node_id, temp, smoke, mode, ts }
 //
 export function normalise(raw) {
+  const payload = raw.payload ?? {}
+  const fireRaw =
+    raw.fire_detected ??
+    raw.fire ??
+    payload.fire_detected ??
+    payload.fire ??
+    0
+
+  const getNum = (v) => {
+    if (v === undefined || v === null || v === '') return null
+    const n = Number(v)
+    return isNaN(n) ? null : n
+  }
+
+  const t = getNum(raw.temp) ?? getNum(raw.temperature) ?? getNum(payload.temp) ?? getNum(payload.temperature)
+  const s = getNum(raw.smoke) ?? getNum(raw.smoke_level) ?? getNum(payload.smoke) ?? getNum(payload.smoke_level)
+
   return {
     id:    raw.node_id  ?? raw.id,
-    temp:  raw.temp     ?? raw.temperature,
-    smoke: raw.smoke    ?? raw.smoke_level,
+    temp:  t ?? 0,
+    smoke: s ?? 0,
     mode:  raw.mode     ?? raw.comm_mode ?? 'wifi',
     ts:    raw.ts       ?? Date.now(),
+    fireDetected: Number(fireRaw) === 1 || fireRaw === true || fireRaw === '1',
   }
 }
+
