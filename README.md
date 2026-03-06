@@ -14,6 +14,17 @@
 - `docs/`: Working documentation for topics, schemas, and experiment logs.
 - `docs/figures/`: Diagrams and images referenced by documentation.
 
+## Recent Changes (March 2026)
+
+- **New Thresholds**: Updated the system-wide alarm triggers to **57°C** for temperature and **80 PPM** for smoke levels.
+- **Improved UI Monitoring**:
+    - **Visual Flagging**: Nodes exceeding thresholds are now highlighted in **bright red** with an "ALARM" badge in the Node List.
+    - **PPM Units**: Smoke levels are now displayed and logged in **PPM** (Parts Per Million) for better precision.
+    - **Independent Breach Detection**: The system now tracks Temperature, Smoke, and Fire flags independently, allowing the Alert Feed to show complex fire scenarios (e.g., "High Temp & High Smoke").
+    - **Recovery Alerts**: The Alert Feed now pushes a **"RECOVERED"** message once all sensor values for a flat return to nominal levels.
+- **Timing Update**: The system watchdog, heartbeat, and simulation intervals have been synchronized to **10 seconds** to optimize network traffic and reliability.
+- **Bug Fixes**: Resolved "Black Screen" runtime crashes by adding robust type-checking for numeric node IDs and defensive safety checks across all React components.
+
 ## Dashboard Setup
 
 ```bash
@@ -29,41 +40,47 @@ Open `http://localhost:5173` in your browser.
 ## Raspberry Pi Setup
 
 1. Install Required
-```
+```bash
 sudo apt update
 sudo apt install nodejs npm -y
 sudo apt install mosquitto mosquitto-clients -y
 ```
 
-3. Configure Mosquitto
+2. Configure Mosquitto
 `sudo nano /etc/mosquitto/conf.d/websockets.conf`
 
 Add the following into your websockets.conf:
-```listener 1883
+```
+listener 1883
 listener 9001
 protocol websockets
 allow_anonymous true
 ```
 
-3. Restart Mosquito
+3. Restart Mosquitto
 `sudo systemctl restart mosquitto`
 
-4. SCP dashboard files into Raspberry Pi
-`scp (files location) (piusername)@(piaddress):(locationtosaveto)`
+4. Build and Deploy Dashboard (Recommended for Stability)
+   
+   **On your Local PC:**
+   ```bash
+   cd dashboard
+   npm run build
+   # SCP the built 'dist' folder to the Pi
+   scp -r dist/* (piusername)@(piaddress):/home/(piusername)/dashboard
+   ```
 
-5. Navigate to dashboard folder
-`cd (location)`
+   **On the Raspberry Pi:**
+   Navigate to the dashboard folder:
+   ```bash
+   cd /home/(piusername)/dashboard
+   # Serve the dashboard using a simple web server
+   npx serve -s . -l 5173
+   ```
 
-6. Delete existing node modules (skip this step if scp from clean copy which has not run npm install on a different operating system)
-`rm -rf node_modules`
+   *(Alternative: If you prefer running in dev mode on the Pi, SCP the entire project, run `npm install`, then `npm run dev`.)*
 
-7. Install Node modules
-`npm install`
-
-8. Run Dashboard
-`npm run dev`
-
-9. For MQTT receive verification
+5. For MQTT receive verification
 `mosquitto_sub -h localhost -t "#" -v`
 
 ## Pico W Setup
