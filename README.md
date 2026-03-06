@@ -9,6 +9,7 @@
 ## Repo Structure
 
 - `firmware/node/`: Embedded node firmware source and node-side scripts.
+- `firmware/node/lorawan_uno_template/`: Sanitized Maker UNO + Cytron LoRa-RFM LoRaWAN OTAA template (no secrets).
 - `firmware/gateway/`: Gateway firmware/services for LoRa-to-MQTT bridging.
 - `dashboard/`: UI/dashboard application and related assets.
 - `docs/`: Working documentation for topics, schemas, and experiment logs.
