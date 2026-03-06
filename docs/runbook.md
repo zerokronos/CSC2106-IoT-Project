@@ -64,6 +64,57 @@ Bridge runtime files:
 - log: `/tmp/csc2106_bridge.log`
 - pid: `/tmp/csc2106_bridge.pid`
 
+## Real TTN webhook via ngrok (works on phone hotspot)
+
+Start the local pieces, expose the bridge publicly with ngrok, then verify the full public path before configuring TTN:
+
+```bash
+cd server/bridge
+./scripts/mqtt_status.sh
+./scripts/bridge_start.sh
+./scripts/ttn_ngrok_start.sh
+./scripts/ttn_webhook_verify.sh
+```
+
+The ngrok helper stores:
+- ngrok log: `/tmp/csc2106_ngrok.log`
+- ngrok pid: `/tmp/csc2106_ngrok.pid`
+- ngrok HTTPS URL: `/tmp/csc2106_ngrok_url.txt`
+
+TTN Console steps for a Custom webhook:
+- Open your TTN application.
+- Go to `Integrations` -> `Webhooks`.
+- Click `Add Webhook`.
+- Select `Custom webhook`.
+- Set `Webhook ID` to a stable name such as `csc2106-bridge-ngrok`.
+- Set `Webhook format` to `JSON`.
+- Set `Base URL` to the exact ngrok endpoint printed by `./scripts/ttn_ngrok_start.sh`, for example `https://example.ngrok-free.app/ttn/uplink`.
+- In `Enabled event types`, enable `Uplink message`.
+- Save the webhook.
+
+Notes from TTN webhook behavior:
+- TTN docs say a Custom webhook is configured with a `Webhook ID`, `JSON` format, and a `Base URL`.
+- TTN appends event paths only if you configure them. For this bridge, keep the Base URL itself as `.../ttn/uplink` so TTN posts directly to the bridge endpoint.
+- TTN requires the endpoint to be reachable. A successful check should return `HTTP 200 OK`.
+- If your ngrok URL changes, update the TTN webhook Base URL and save again.
+
+Useful commands while testing:
+
+```bash
+tail -f /tmp/csc2106_bridge.log
+tail -f /tmp/csc2106_ngrok.log
+open http://127.0.0.1:8000/dashboard
+```
+
+Stop everything cleanly:
+
+```bash
+cd server/bridge
+./scripts/bridge_stop.sh
+[[ -f /tmp/csc2106_ngrok.pid ]] && kill "$(cat /tmp/csc2106_ngrok.pid)" 2>/dev/null || true
+rm -f /tmp/csc2106_ngrok.pid /tmp/csc2106_ngrok_url.txt
+```
+
 ## 4) Run simulator (new terminal)
 
 ```bash
