@@ -37,6 +37,33 @@ export BRIDGE_HTTP_PORT=8000
 uvicorn app:app --host 0.0.0.0 --port "$BRIDGE_HTTP_PORT"
 ```
 
+## Stable run (recommended on mobile data)
+
+Use the helper scripts so the bridge keeps running even if your terminal session drops.
+
+```bash
+cd server/bridge
+./scripts/mqtt_status.sh
+./scripts/bridge_start.sh
+./scripts/bridge_status.sh
+```
+
+Stop it cleanly when needed:
+
+```bash
+cd server/bridge
+./scripts/bridge_stop.sh
+```
+
+The helper scripts use these defaults unless you override them before starting:
+- `MQTT_HOST=localhost`
+- `MQTT_PORT=1883`
+- `BRIDGE_HTTP_PORT=8000`
+
+Bridge runtime files:
+- log: `/tmp/csc2106_bridge.log`
+- pid: `/tmp/csc2106_bridge.pid`
+
 ## 4) Run simulator (new terminal)
 
 ```bash
@@ -119,3 +146,8 @@ cd server/bridge
 source .venv/bin/activate
 python tests/smoke_ttn_to_mqtt.py --http http://127.0.0.1:8000
 ```
+
+## Troubleshooting
+- Address already in use on `1883`: run `lsof -nP -iTCP:1883` or `./server/bridge/scripts/mqtt_status.sh` to see what already owns the broker port. Stop the conflicting process, or start your intended broker only once.
+- `ConnectionRefusedError` to MQTT: make sure Mosquitto is actually running with `mosquitto -v` in another terminal, then restart the bridge with `./server/bridge/scripts/bridge_stop.sh` and `./server/bridge/scripts/bridge_start.sh`.
+- Tail logs: use `tail -f /tmp/csc2106_bridge.log` for live output, or `./server/bridge/scripts/bridge_status.sh` for the latest 20 lines.
