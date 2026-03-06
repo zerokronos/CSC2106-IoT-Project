@@ -2,18 +2,30 @@ import network
 import time
 import json
 import ubinascii
+import random
 from machine import UART, Pin
 from umqtt.simple import MQTTClient
 
+# Import test data from separate file
+try:
+    from test_data import TEST_SENSOR_DATA
+    TEST_DATA_AVAILABLE = True
+except ImportError:
+    TEST_SENSOR_DATA = None
+    TEST_DATA_AVAILABLE = False
+
 # --- 1. CONFIGURATION ---
-WIFI_SSID = "SINGTEL-B64A"
-WIFI_PASS = "teefeipaer"
-MQTT_BROKER = "192.168.1.82"  # <-- USE YOUR PI's IP ADDRESS
+WIFI_SSID = "Travis's A55 5G"
+WIFI_PASS = "Welcome@2025"
+MQTT_BROKER = "10.142.0.31"  # <-- USE YOUR PI's IP ADDRESS
+NODE_ID = "flat02"  # <-- CHANGE THIS FOR EACH FLAT (flat01, flat02, flat03, etc.)
 CLIENT_ID = ubinascii.hexlify(machine.unique_id()) # Unique ID for this Pico
-TOPIC_TELEMETRY = b"telemetry/site1/flat01" # Main data channel
-TOPIC_HEARTBEAT = b"heartbeat/site1/flat01"
-HEARTBEAT_INTERVAL = 30 # Seconds between keep-alive signals
+TOPIC_TELEMETRY = b"telemetry/site1/" + NODE_ID.encode() # Main data channel
+TOPIC_HEARTBEAT = b"heartbeat/site1/" + NODE_ID.encode()
+HEARTBEAT_INTERVAL = 3 # Seconds between keep-alive signals
 MAX_RETRIES = 3
+SIMULATION_MODE = True  # Set to False when Arduino is connected
+SIMULATION_INTERVAL = 2  # Send simulated data every N seconds
 
 # --- 2. HARDWARE SETUP ---
 # UART 0: TX=GP0, RX=GP1 (9600 baud to match Arduino)
@@ -25,6 +37,8 @@ failover_button = Pin(21, Pin.IN, Pin.PULL_UP)
 manual_lora_override = False
 last_button_press_time = 0
 DEBOUNCE_MS = 200 # 200ms debounce time
+last_simulation_time = 0  # Track simulation data sending
+test_data_index = 0  # Index for cycling through test data
 
 # --- 3. FUNCTIONS ---
 
@@ -105,7 +119,7 @@ def send_heartbeat():
         client.connect()
         
         payload = json.dumps({
-            "node_id": "flat01",
+            "node_id": NODE_ID,
             "msg_type": "heartbeat",
             "ts": time.time(),
             "mode": "wifi"
@@ -142,42 +156,74 @@ while True:
             if network.WLAN(network.STA_IF).isconnected():
                 led.on()
 
-    # Check if Arduino has sent a signal
-    if uart.any():
+    # Get sensor data from test data or Arduino
+    data = None
+    
+    # --- SIMULATION MODE: Use test data from test_data.py ---
+    if SIMULATION_MODE and (time.time() - last_simulation_time) > SIMULATION_INTERVAL:
+        last_simulation_time = time.time()
+        
+        if TEST_DATA_AVAILABLE and TEST_SENSOR_DATA:
+            # Cycle through test data
+            test_case = TEST_SENSOR_DATA[test_data_index]
+            test_data_index = (test_data_index + 1) % len(TEST_SENSOR_DATA)
+            
+            data = {
+                "temp": test_case["temp"],
+                "smoke": test_case["smoke"],
+                "fire": test_case["fire"]
+            }
+            print(f"[TEST DATA #{test_data_index}] {test_case['description']}")
+            print(f"[TEST DATA] {data}")
+        else:
+            # Fallback to random if test data not available
+            print("[WARNING] test_data.py not found, using random data")
+            data = {
+                "temp": 25.0 + random.uniform(-2, 2),  # 23-27°C range
+                "smoke": random.uniform(0, 0.5),        # 0-0.5 range
+                "fire": 0
+            }
+            print(f"[SIMULATED] Data: {data}")
+    
+    # --- REAL MODE: Read from Arduino via UART ---
+    elif not SIMULATION_MODE and uart.any():
         # Read the message from the Uno
         line = uart.readline()
         try:
             # Expecting JSON from Uno: {"temp": 30.5, "smoke": 0.2, "fire": 0}
             data = json.loads(line.decode('utf-8').strip())
             print(f"Data from Uno: {data}")
-            
-            # Prepare Payload for Dashboard
-            payload = json.dumps({
-                "node_id": "flat01",
-                "temp": data.get("temp", 0),
-                "smoke": data.get("smoke", 0),
-                "fire_detected": data.get("fire", 0),
-                "mode": "wifi",
-                "ts": time.time()
-            })
-            
-            print(f"Sending Telemetry: {payload}")
-            # Attempt to send via WiFi (with Retries)
-            success = publish_mqtt_safe(TOPIC_TELEMETRY, payload)
-            
-            if success:
-                # 3b.4 MQTT is back/online -> Tell Uno to STOP LoRa
-                print("WiFi Success -> Sending LORA_OFF")
-                uart.write("LORA_OFF\n")
-                led.on()
-            else:
-                # 3b.1 After N times unsuccessfully -> Tell Uno to START LoRa
-                print("WiFi Failed -> Sending LORA_ON")
-                uart.write("LORA_ON\n")
-                led.off()
-
         except ValueError:
             print("Received invalid data from Uno (not JSON)")
+    
+    # --- PUBLISH DATA IF AVAILABLE ---
+    if data:
+        # Prepare Payload for Dashboard
+        payload = json.dumps({
+            "node_id": NODE_ID,
+            "temp": data.get("temp", 0),
+            "smoke": data.get("smoke", 0),
+            "fire_detected": data.get("fire", 0),
+            "mode": "wifi",
+            "ts": time.time()
+        })
+        
+        print(f"Sending Telemetry: {payload}")
+        # Attempt to send via WiFi (with Retries)
+        success = publish_mqtt_safe(TOPIC_TELEMETRY, payload)
+        
+        if success:
+            # MQTT is back/online -> Tell Uno to STOP LoRa
+            print("WiFi Success -> Sending LORA_OFF")
+            if not SIMULATION_MODE:
+                uart.write("LORA_OFF\n")
+            led.on()
+        else:
+            # After N times unsuccessfully -> Tell Uno to START LoRa
+            print("WiFi Failed -> Sending LORA_ON")
+            if not SIMULATION_MODE:
+                uart.write("LORA_ON\n")
+            led.off()
 
     # Periodic check to ensure the Pico stays connected to WiFi
     if not network.WLAN(network.STA_IF).isconnected():
