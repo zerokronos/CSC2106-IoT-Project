@@ -66,6 +66,8 @@ Bridge runtime files:
 
 ## Real TTN webhook via ngrok (works on phone hotspot)
 
+For the full WisGate + TTN + ngrok + bridge end-to-end verification checklist, see `docs/wisgate-ttn-test-runbook.md`.
+
 Start the local pieces, expose the bridge publicly with ngrok, then verify the full public path before configuring TTN:
 
 ```bash

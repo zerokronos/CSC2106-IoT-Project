@@ -56,6 +56,7 @@ Evidence to capture under `docs/figures/`:
 - `dashboard-lorawan-alert.png`
 
 For the full operator runbook, evidence checklist, and local verification steps, see `docs/runbook.md`.
+For the step-by-step WisGate/TTN verification walkthrough, see `docs/wisgate-ttn-test-runbook.md`.
 
 ## Dashboard Setup
 
