@@ -3,25 +3,29 @@ import time
 import json
 import ubinascii
 import random
-import machine
 from machine import UART, Pin
 from umqtt.simple import MQTTClient
 
-# Keep UART frames bounded and reject malformed sensor payloads.
-MAX_UART_LINE_BYTES = 256
-
-
+# Import test data from separate file
+try:
+    from test_data import TEST_SENSOR_DATA
+    TEST_DATA_AVAILABLE = True
+except ImportError:
+    TEST_SENSOR_DATA = None
+    TEST_DATA_AVAILABLE = False
 
 # --- 1. CONFIGURATION ---
-WIFI_SSID = "Travis"
-WIFI_PASS = "password1234"
-MQTT_BROKER = "10.116.98.31"  # <-- USE YOUR PI's IP ADDRESS
+WIFI_SSID = "changethis"
+WIFI_PASS = "changethis"
+MQTT_BROKER = "changethis"  # <-- USE YOUR PI's IP ADDRESS
 NODE_ID = "flat02"  # <-- CHANGE THIS FOR EACH FLAT (flat01, flat02, flat03, etc.)
 CLIENT_ID = ubinascii.hexlify(machine.unique_id()) # Unique ID for this Pico
 TOPIC_TELEMETRY = b"telemetry/site1/" + NODE_ID.encode() # Main data channel
 TOPIC_HEARTBEAT = b"heartbeat/site1/" + NODE_ID.encode()
-HEARTBEAT_INTERVAL = 3 # Seconds between keep-alive signals
+HEARTBEAT_INTERVAL = 10 # Seconds between keep-alive signals
 MAX_RETRIES = 3
+SIMULATION_MODE = True  # Set to False when Arduino is connected
+SIMULATION_INTERVAL = 10  # Send simulated data every N seconds
 
 # --- 2. HARDWARE SETUP ---
 # UART 0: TX=GP0, RX=GP1 (9600 baud to match Arduino)
@@ -33,7 +37,8 @@ failover_button = Pin(21, Pin.IN, Pin.PULL_UP)
 manual_lora_override = False
 last_button_press_time = 0
 DEBOUNCE_MS = 200 # 200ms debounce time
-lora_failover_active = False
+last_simulation_time = 0  # Track simulation data sending
+test_data_index = 0  # Index for cycling through test data
 
 # --- 3. FUNCTIONS ---
 
@@ -237,32 +242,55 @@ while True:
             if network.WLAN(network.STA_IF).isconnected():
                 led.on()
 
-    # --- REAL MODE ONLY: Read from Arduino via UART ---
+    # Get sensor data from test data or Arduino
     data = None
-    data = read_uno_json_line()
-    if data and "temp" in data and "smoke" in data:
-        print(f"Data from Uno: {data}")
-    elif data and "ack" in data:
-        print(f"Uno ACK: {data['ack']}")
-        data = None
-
-    if data:
-        data = sanitize_sensor_data(data)
-        if data is None:
-            print("Dropped malformed sensor frame")
+    
+    # --- SIMULATION MODE: Use test data from test_data.py ---
+    if SIMULATION_MODE and (time.time() - last_simulation_time) > SIMULATION_INTERVAL:
+        last_simulation_time = time.time()
+        
+        if TEST_DATA_AVAILABLE and TEST_SENSOR_DATA:
+            # Cycle through test data
+            test_case = TEST_SENSOR_DATA[test_data_index]
+            test_data_index = (test_data_index + 1) % len(TEST_SENSOR_DATA)
+            
+            data = {
+                "temp": test_case["temp"],
+                "smoke": test_case["smoke"],
+                "fire": test_case["fire"]
+            }
+            print(f"[TEST DATA #{test_data_index}] {test_case['description']}")
+            print(f"[TEST DATA] {data}")
+        else:
+            # Fallback to random if test data not available
+            print("[WARNING] test_data.py not found, using random data")
+            data = {
+                "temp": 25.0 + random.uniform(-2, 2),  # 23-27°C range
+                "smoke": random.uniform(0, 0.5),        # 0-0.5 range
+                "fire": 0
+            }
+            print(f"[SIMULATED] Data: {data}")
+    
+    # --- REAL MODE: Read from Arduino via UART ---
+    elif not SIMULATION_MODE and uart.any():
+        # Read the message from the Uno
+        line = uart.readline()
+        try:
+            # Expecting JSON from Uno: {"temp": 30.5, "smoke": 0.2, "fire": 0}
+            data = json.loads(line.decode('utf-8').strip())
+            print(f"Data from Uno: {data}")
+        except ValueError:
+            print("Received invalid data from Uno (not JSON)")
     
     # --- PUBLISH DATA IF AVAILABLE ---
     if data:
-        # Determine current mode based on failover state
-        current_mode = "lora" if (manual_lora_override or lora_failover_active) else "wifi"
-        
         # Prepare Payload for Dashboard
         payload = json.dumps({
-            "node_id": data.get("node_id", NODE_ID),
+            "node_id": NODE_ID,
             "temp": data.get("temp", 0),
             "smoke": data.get("smoke", 0),
             "fire_detected": data.get("fire", 0),
-            "mode": current_mode,
+            "mode": "wifi",
             "ts": time.time()
         })
         
@@ -271,14 +299,16 @@ while True:
         success = publish_mqtt_safe(TOPIC_TELEMETRY, payload)
         
         if success:
-            # MQTT is healthy -> keep Uno on UART path.
-            print("WiFi Success -> Sending LORA_OFF (if needed)")
-            set_uno_lora_mode(False)
+            # MQTT is back/online -> Tell Uno to STOP LoRa
+            print("WiFi Success -> Sending LORA_OFF")
+            if not SIMULATION_MODE:
+                uart.write("LORA_OFF\n")
             led.on()
         else:
-            # MQTT unhealthy -> switch Uno to LoRa failover.
-            print("WiFi Failed -> Sending LORA_ON (if needed)")
-            set_uno_lora_mode(True)
+            # After N times unsuccessfully -> Tell Uno to START LoRa
+            print("WiFi Failed -> Sending LORA_ON")
+            if not SIMULATION_MODE:
+                uart.write("LORA_ON\n")
             led.off()
 
     # Periodic check to ensure the Pico stays connected to WiFi

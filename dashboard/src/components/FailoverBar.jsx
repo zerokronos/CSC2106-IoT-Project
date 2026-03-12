@@ -1,5 +1,3 @@
-import { NODE_IDS } from '../utils/simulator'
-
 const modeColors = {
   wifi:    { bg:'rgba(0,212,255,0.1)',  color:'var(--accent-wifi)',  border:'rgba(0,212,255,0.2)'  },
   lora:    { bg:'rgba(249,115,22,0.1)', color:'var(--accent-lora)',  border:'rgba(249,115,22,0.2)' },
@@ -8,6 +6,8 @@ const modeColors = {
 const modeIcon = { wifi:'📶', lora:'📡', offline:'✕' }
 
 export default function FailoverBar({ nodes, failoverActive, onSimulate, onRecover }) {
+  const nodeIds = Object.keys(nodes).sort()
+
   return (
     <div style={{
       background:'var(--surface)', border:'1px solid var(--border)',
@@ -19,9 +19,17 @@ export default function FailoverBar({ nodes, failoverActive, onSimulate, onRecov
       </div>
 
       <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-        {NODE_IDS.map(id => {
-          const mode = nodes[id].online ? nodes[id].mode : 'offline'
-          const c = modeColors[mode]
+        {nodeIds.length === 0 && (
+          <div style={{ fontFamily:'var(--mono)', fontSize:11, color:'var(--text-dim)' }}>
+            No connected nodes
+          </div>
+        )}
+
+        {nodeIds.map(id => {
+          const n = nodes[id]
+          if (!n) return null
+          const mode = n.online ? (n.mode || 'wifi') : 'offline'
+          const c = modeColors[mode] || modeColors.offline
           return (
             <div key={id} style={{
               fontFamily:'var(--mono)', fontSize:11, fontWeight:700,
