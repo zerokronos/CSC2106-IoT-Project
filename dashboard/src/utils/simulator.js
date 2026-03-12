@@ -83,10 +83,7 @@ export function simulateTick(nodes, tickRef) {
 }
 
 // ─── NORMALISE — swap this out when real MQTT arrives ────────────────────────
-// Person C might use different field names — adapt only THIS function.
-//
-// Expected incoming shape (agree with Person C):
-// { node_id, temp, smoke, mode, ts }
+// Handles both WiFi path (temp, smoke) and LoRa bridge path (temp_c, smoke, node001)
 //
 export function normalise(raw) {
   const payload = raw.payload ?? {}

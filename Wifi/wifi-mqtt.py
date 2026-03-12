@@ -132,6 +132,90 @@ def send_heartbeat():
     except Exception as e:
         print(f"Heartbeat Failed: {e}")
 
+
+def read_uno_json_line():
+    """Read one UART line from Uno and parse JSON if valid."""
+    if not uart.any():
+        return None
+
+    line = uart.readline()
+    if not line:
+        return None
+
+    # Guard against garbage/oversized frames from serial noise.
+    if len(line) > MAX_UART_LINE_BYTES:
+        print("Discarded oversized UART line")
+        return None
+
+    try:
+        decoded = line.decode('utf-8').strip()
+    except Exception:
+        return None
+
+    if not decoded or not decoded.startswith("{"):
+        # Ignore LMIC/debug text from Uno that is not JSON payload/ack.
+        return None
+
+    try:
+        return json.loads(decoded)
+    except ValueError:
+        print(f"Received invalid JSON from Uno: {decoded}")
+        return None
+
+
+def sanitize_sensor_data(data):
+    """Validate and normalize telemetry payload before publishing."""
+    if not isinstance(data, dict):
+        return None
+
+    if "temp" not in data or "smoke" not in data:
+        return None
+
+    try:
+        temp = float(data.get("temp"))
+        smoke = float(data.get("smoke"))
+    except (TypeError, ValueError):
+        print(f"Rejected non-numeric sensor payload: {data}")
+        return None
+
+    # Conservative bounds to reject corrupted frames.
+    if temp < -20 or temp > 120:
+        print(f"Rejected temp out of range: {temp}")
+        return None
+    if smoke < 0 or smoke > 1:
+        print(f"Rejected smoke out of range: {smoke}")
+        return None
+
+    fire_raw = data.get("fire", 0)
+    try:
+        fire = 1 if int(fire_raw) else 0
+    except (TypeError, ValueError):
+        fire = 0
+
+    node_id = data.get("node_id", NODE_ID)
+    if not isinstance(node_id, str) or not node_id.strip():
+        node_id = NODE_ID
+
+    return {
+        "node_id": node_id,
+        "temp": round(temp, 2),
+        "smoke": round(smoke, 4),
+        "fire": fire,
+    }
+
+
+def set_uno_lora_mode(enable):
+    """Send mode toggle to Uno only when state changes."""
+    global lora_failover_active
+
+    if enable == lora_failover_active:
+        return
+
+    cmd = "LORA_ON\n" if enable else "LORA_OFF\n"
+    uart.write(cmd)
+    lora_failover_active = enable
+    print(f"Sent to Uno: {cmd.strip()}")
+
 # --- 4. MAIN LOOP ---
 
 # Initial connection
@@ -149,9 +233,11 @@ while True:
         manual_lora_override = not manual_lora_override # Toggle the state
         if manual_lora_override:
             print("TOGGLE: Manual LoRa override ACTIVATED.")
+            set_uno_lora_mode(True)
             led.off()
         else:
             print("TOGGLE: Manual LoRa override DEACTIVATED. Reverting to WiFi.")
+            set_uno_lora_mode(False)
             # Restore LED status based on actual WiFi connection
             if network.WLAN(network.STA_IF).isconnected():
                 led.on()
