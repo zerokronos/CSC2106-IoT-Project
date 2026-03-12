@@ -40,6 +40,14 @@ export function useDashboard() {
     setAlerts(prev => [...incoming, ...prev].slice(0, MAX_ALERTS))
   }, [])
 
+  // ── map severity levels for bridge payload ─────────────────────────────────
+  const mapSeverity = useCallback((severity) => {
+    const value = String(severity ?? '').toLowerCase()
+    if (value === 'alarm' || value === 'high' || value === 'critical' || value === '2') return 'high'
+    if (value === 'warn' || value === 'warning' || value === 'med' || value === 'medium' || value === '1') return 'med'
+    return 'info'
+  }, [])
+
   // ── append history helper ──────────────────────────────────────────────────
   const appendHistory = useCallback((updatedNodes) => {
     setHistory(prev => {
@@ -105,9 +113,14 @@ export function useDashboard() {
 
       client.on('connect', () => {
         pushAlerts([{ sev:'info', msg:'MQTT connected to broker', time: new Date().toLocaleTimeString() }])
+        // WiFi primary path topics
         client.subscribe('telemetry/#')
         client.subscribe('alert/#')
         client.subscribe('heartbeat/#')
+        // LoRa fallback bridge path topics (csc2106/v0/...)
+        client.subscribe('csc2106/v0/telemetry/#')
+        client.subscribe('csc2106/v0/alert/#')
+        client.subscribe('csc2106/v0/heartbeat/#')
       })
 
       client.on('message', (topic, payload) => {
@@ -115,23 +128,24 @@ export function useDashboard() {
           const raw  = JSON.parse(payload.toString())
           const data = normalise(raw)
 
-          if (topic.startsWith('telemetry/')) {
+          if (topic.includes('/telemetry/') || topic.startsWith('telemetry/')) {
             setNodes(prev => {
+              if (!prev[data.id]) return prev
               const n = { ...prev[data.id], ...data, online: true, lastSeen: Date.now() }
               n.alertActive = n.temp > TEMP_ALARM || n.smoke > SMOKE_ALARM
               return { ...prev, [data.id]: n }
             })
           }
 
-          if (topic.startsWith('alert/')) {
+          if (topic.includes('/alert/') || topic.startsWith('alert/')) {
             pushAlerts([{
-              sev:  raw.severity ?? 'med',
-              msg:  raw.msg      ?? `Alert from ${data.id}`,
+              sev:  mapSeverity(raw.severity),
+              msg:  raw.msg ?? raw.reason ?? `Alert from ${data.id}`,
               time: new Date().toLocaleTimeString(),
             }])
           }
 
-          if (topic.startsWith('heartbeat/')) {
+          if (topic.includes('/heartbeat/') || topic.startsWith('heartbeat/')) {
             setNodes(prev => {
               if (!prev[data.id]) return prev
               // Update lastSeen to keep the node "online" (green dot)
@@ -150,7 +164,7 @@ export function useDashboard() {
     })
 
     return () => mqttRef.current?.end()
-  }, [appendHistory, pushAlerts])
+  }, [appendHistory, mapSeverity, pushAlerts])
 
   // ── EFFECT for HISTORY ─────────────────────────────────────────────────────
   const isInitialMount = useRef(true)

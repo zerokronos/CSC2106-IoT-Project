@@ -83,17 +83,28 @@ export function simulateTick(nodes, tickRef) {
 }
 
 // ─── NORMALISE — swap this out when real MQTT arrives ────────────────────────
-// Person C might use different field names — adapt only THIS function.
-//
-// Expected incoming shape (agree with Person C):
-// { node_id, temp, smoke, mode, ts }
+// Handles both WiFi path (temp, smoke) and LoRa bridge path (temp_c, smoke, node001)
 //
 export function normalise(raw) {
+  // Map LoRa node IDs (node001) to dashboard flat IDs (flat01)
+  const rawId = String(raw.node_id ?? raw.id ?? '').toLowerCase()
+  let id = rawId
+  const nodeMatch = rawId.match(/^node(\d+)$/)
+  if (nodeMatch) {
+    id = `flat${String(Number(nodeMatch[1])).padStart(2, '0')}`
+  }
+
+  // Handle both WiFi and LoRa payload field names
+  const temp = raw.temp ?? raw.temperature ?? raw.temp_c ?? null
+  const smoke = raw.smoke ?? raw.smoke_level ?? null
+  const modeRaw = String(raw.mode ?? raw.comm_mode ?? 'wifi').toLowerCase()
+  const mode = modeRaw === 'lorawan' ? 'lora' : modeRaw
+
   return {
-    id:    raw.node_id  ?? raw.id,
-    temp:  raw.temp     ?? raw.temperature,
-    smoke: raw.smoke    ?? raw.smoke_level,
-    mode:  raw.mode     ?? raw.comm_mode ?? 'wifi',
-    ts:    raw.ts       ?? Date.now(),
+    id,
+    temp,
+    smoke,
+    mode,
+    ts: raw.ts ?? Date.now(),
   }
 }
