@@ -37,6 +37,7 @@ TEST_SENSOR_DATA = [
         "smoke": 0.3,
         "fire": 0,
         "description": "Test case 4: High temperature, medium smoke"
+    },
     {
         "node_id": 2,
         "msg_type": 1,

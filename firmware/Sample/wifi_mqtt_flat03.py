@@ -15,16 +15,17 @@ except ImportError:
     TEST_DATA_AVAILABLE = False
 
 # --- 1. CONFIGURATION ---
-WIFI_SSID = "changethis"
-WIFI_PASS = "changethis"
-MQTT_BROKER = "changethis"  # <-- USE YOUR PI's IP ADDRESS
-NODE_ID = "flat02"  # <-- CHANGE THIS FOR EACH FLAT (flat01, flat02, flat03, etc.)
+WIFI_SSID = "CHANGE_THIS"    # <-- USE YOUR WIFI NAME
+WIFI_PASS = "CHANGE_THIS"    # <-- USE YOUR WIFI PASSWORD
+MQTT_BROKER = "CHANGE_THIS"  # <-- USE YOUR PI's IP ADDRESS
+NODE_ID = "flat03"  # <-- CHANGE THIS FOR EACH FLAT (flat01, flat02, flat03, etc.)
 CLIENT_ID = ubinascii.hexlify(machine.unique_id()) # Unique ID for this Pico
 TOPIC_TELEMETRY = b"telemetry/site1/" + NODE_ID.encode() # Main data channel
 TOPIC_HEARTBEAT = b"heartbeat/site1/" + NODE_ID.encode()
 HEARTBEAT_INTERVAL = 10 # Seconds between keep-alive signals
 MAX_RETRIES = 3
-SIMULATION_MODE = True  # Set to False when Arduino is connected
+MAX_UART_LINE_BYTES = 256
+SIMULATION_MODE = False  # Set to False when Arduino is connected
 SIMULATION_INTERVAL = 10  # Send simulated data every N seconds
 
 # --- 2. HARDWARE SETUP ---
@@ -35,6 +36,7 @@ failover_button = Pin(21, Pin.IN, Pin.PULL_UP)
 
 # --- Global state for toggle ---
 manual_lora_override = False
+lora_failover_active = False
 last_button_press_time = 0
 DEBOUNCE_MS = 200 # 200ms debounce time
 last_simulation_time = 0  # Track simulation data sending
@@ -107,9 +109,9 @@ def publish_mqtt_safe(topic, payload):
 def send_heartbeat():
     """Sends a periodic keep-alive signal."""
     try:
-        # Check manual override
+        # Don't send heartbeat in LoRa override — simulate full WiFi loss
         if manual_lora_override:
-            return # Don't send heartbeat in override mode
+            return
 
         # Prevent error logs if WiFi is already known to be down
         if not network.WLAN(network.STA_IF).isconnected():
@@ -117,7 +119,7 @@ def send_heartbeat():
 
         client = MQTTClient(CLIENT_ID, MQTT_BROKER, keepalive=60)
         client.connect()
-        
+
         payload = json.dumps({
             "node_id": NODE_ID,
             "msg_type": "heartbeat",
@@ -273,14 +275,10 @@ while True:
     
     # --- REAL MODE: Read from Arduino via UART ---
     elif not SIMULATION_MODE and uart.any():
-        # Read the message from the Uno
-        line = uart.readline()
-        try:
-            # Expecting JSON from Uno: {"temp": 30.5, "smoke": 0.2, "fire": 0}
-            data = json.loads(line.decode('utf-8').strip())
+        parsed = read_uno_json_line()
+        if parsed and "temp" in parsed and "smoke" in parsed:
+            data = parsed
             print(f"Data from Uno: {data}")
-        except ValueError:
-            print("Received invalid data from Uno (not JSON)")
     
     # --- PUBLISH DATA IF AVAILABLE ---
     if data:

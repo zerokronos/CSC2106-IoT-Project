@@ -11,12 +11,12 @@ export default function App() {
   const {
     nodes, history, alerts,
     failoverActive, simulateFailover, recoverNode,
-    useMqtt,
+    clearNodes, useMqtt,
   } = useDashboard()
 
   return (
     <div>
-      <Header useMqtt={useMqtt} />
+      <Header useMqtt={useMqtt} onClearNodes={clearNodes} />
 
       <main style={{
         padding:'24px 28px',

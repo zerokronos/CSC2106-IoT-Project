@@ -180,9 +180,9 @@ async def ttn_uplink(request: Request) -> JSONResponse:
         decoded = parse_uplink(body)
         route = message_route(decoded.msg_type)
     except TTNDecodeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse({"ok": False, "skipped": True, "detail": str(exc)}, status_code=200)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse({"ok": False, "skipped": True, "detail": str(exc)}, status_code=200)
 
     severity = decoded.severity
     message = make_contract_payload(
@@ -199,6 +199,7 @@ async def ttn_uplink(request: Request) -> JSONResponse:
             "smoke": decoded.smoke,
             "msg_type": decoded.msg_type,
             "severity": decoded.severity,
+            "fire": 1 if decoded.severity == 1 else 0,
         },
         meta=decoded.meta,
     )

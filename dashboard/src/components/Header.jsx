@@ -37,9 +37,15 @@ const styles = {
     background: 'rgba(0,212,255,0.1)', color: 'var(--accent-wifi)',
     border: '1px solid rgba(0,212,255,0.2)', letterSpacing: '0.06em',
   },
+  clearBtn: {
+    fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 700,
+    padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+    background: 'rgba(255,60,60,0.1)', color: '#ff6060',
+    border: '1px solid rgba(255,60,60,0.2)', letterSpacing: '0.06em',
+  },
 }
 
-export default function Header({ useMqtt }) {
+export default function Header({ useMqtt, onClearNodes }) {
   const [time, setTime] = useState(new Date().toLocaleTimeString())
   useEffect(() => {
     const t = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000)
@@ -57,6 +63,7 @@ export default function Header({ useMqtt }) {
       </div>
       <div style={styles.right}>
         {useMqtt && <div style={styles.mqttTag}>MQTT LIVE</div>}
+        <button style={styles.clearBtn} onClick={onClearNodes}>CLEAR NODES</button>
         <div style={styles.liveBadge}>
           <div style={styles.liveDot} />
           LIVE

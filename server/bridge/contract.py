@@ -23,14 +23,14 @@ def normalize_node_id(value: Any) -> str:
     if isinstance(value, int):
         if value <= 0:
             raise ValueError("node_id integer must be > 0")
-        return f"node{value:03d}"
+        return f"flat{value:02d}"
 
     text = str(value).strip()
     if not text:
         raise ValueError("node_id is empty")
 
     if text.isdigit():
-        return f"node{int(text):03d}"
+        return f"flat{int(text):02d}"
 
     return text
 

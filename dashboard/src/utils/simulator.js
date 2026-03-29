@@ -87,11 +87,13 @@ export function simulateTick(nodes, tickRef) {
 //
 export function normalise(raw) {
   const payload = raw.payload ?? {}
+  const values  = raw.values ?? {}
   const fireRaw =
     raw.fire_detected ??
     raw.fire ??
     payload.fire_detected ??
     payload.fire ??
+    values.fire ??
     0
 
   const getNum = (v) => {
@@ -100,14 +102,15 @@ export function normalise(raw) {
     return isNaN(n) ? null : n
   }
 
-  const t = getNum(raw.temp) ?? getNum(raw.temperature) ?? getNum(payload.temp) ?? getNum(payload.temperature)
+  const t = getNum(raw.temp) ?? getNum(raw.temp_c) ?? getNum(raw.temperature) ?? getNum(payload.temp) ?? getNum(payload.temp_c) ?? getNum(payload.temperature)
   const s = getNum(raw.smoke) ?? getNum(raw.smoke_level) ?? getNum(payload.smoke) ?? getNum(payload.smoke_level)
 
+  const rawMode = raw.mode ?? raw.comm_mode ?? 'wifi'
   return {
     id:    raw.node_id  ?? raw.id,
     temp:  t ?? 0,
     smoke: s ?? 0,
-    mode:  raw.mode     ?? raw.comm_mode ?? 'wifi',
+    mode:  rawMode === 'lorawan' ? 'lora' : rawMode,
     ts:    raw.ts       ?? Date.now(),
     fireDetected: Number(fireRaw) === 1 || fireRaw === true || fireRaw === '1',
   }

@@ -12,12 +12,31 @@ const MQTT_BROKER_URL = `ws://${window.location.hostname}:9001` // Dynamically u
 const MAX_HISTORY = 60
 const MAX_ALERTS  = 30
 
+const STORAGE_KEY = 'csc2106_known_nodes'
+
+function loadPersistedNodes() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (!saved) return {}
+    const parsed = JSON.parse(saved)
+    // Restore all previously seen nodes as offline — live MQTT will update them
+    const seeded = {}
+    Object.keys(parsed).forEach(id => {
+      seeded[id] = { ...parsed[id], online: false, mode: 'offline', alertActive: false }
+    })
+    return seeded
+  } catch {
+    return {}
+  }
+}
+
 export function useDashboard() {
-  const [nodes,   setNodes]   = useState(() => (USE_REAL_MQTT ? {} : makeInitialNodes()))
+  const [nodes,   setNodes]   = useState(() => (USE_REAL_MQTT ? loadPersistedNodes() : makeInitialNodes()))
   const [history, setHistory] = useState(() => (USE_REAL_MQTT ? {} : Object.fromEntries(NODE_IDS.map(id => [id, []]))))
   const [alerts,  setAlerts]  = useState([])
-  const tickRef   = useRef(0)
-  const mqttRef   = useRef(null)
+  const tickRef    = useRef(0)
+  const mqttRef    = useRef(null)
+  const nodesRef   = useRef({})
 
   const makeNode = useCallback((id) => ({
     id,
@@ -129,63 +148,60 @@ export function useDashboard() {
           if (!id) return
 
           if (topic.includes('/telemetry/') || topic.startsWith('telemetry/')) {
+            // Compute alerts BEFORE setNodes using the ref (pure updater, no side effects)
+            const existing = nodesRef.current[id] ?? makeNode(id)
+            const incomingMode = data.mode ?? (existing.mode === 'offline' ? 'wifi' : (existing.mode ?? 'wifi'))
+            const tempVal  = Number(data.temp  ?? existing.temp  ?? 0)
+            const smokeVal = Number(data.smoke ?? existing.smoke ?? 0)
+            const fireVal  = Boolean(data.fireDetected)
+
+            const isTempAlert  = tempVal  > TEMP_ALARM
+            const isSmokeAlert = smokeVal > SMOKE_ALARM
+            const isFireAlert  = fireVal
+
+            const wasTempAlert  = Number(existing.temp  ?? 0) > TEMP_ALARM
+            const wasSmokeAlert = Number(existing.smoke ?? 0) > SMOKE_ALARM
+            const wasFireAlert  = existing.fireDetected
+            const wasAlert      = existing.alertActive
+            const nextAlertActive = isTempAlert || isSmokeAlert || isFireAlert
+
+            const pendingAlerts = []
+            const time = new Date().toLocaleTimeString()
+            const displayId = String(id).toUpperCase()
+
+            if ((isTempAlert && !wasTempAlert) || (isSmokeAlert && !wasSmokeAlert) || (isFireAlert && !wasFireAlert)) {
+              const cause = []
+              if (isTempAlert  && !wasTempAlert)  cause.push(`HIGH TEMP (${tempVal.toFixed(1)}°C)`)
+              if (isSmokeAlert && !wasSmokeAlert) cause.push(`HIGH SMOKE (${smokeVal.toFixed(1)} PPM)`)
+              if (isFireAlert  && !wasFireAlert)  cause.push('FIRE DETECTED')
+              pendingAlerts.push({ sev: 'high', msg: `${displayId} FLAGGED: ${cause.join(' & ')}`, time })
+            }
+
+            if (existing.mode !== 'lora' && incomingMode === 'lora') {
+              pendingAlerts.push({ sev: 'med', msg: `${displayId}: LORA FALLBACK ACTIVE — WiFi failed, transmitting via LoRaWAN`, time })
+            }
+
+            if (wasAlert && !nextAlertActive) {
+              pendingAlerts.push({ sev: 'info', msg: `${displayId}: RECOVERED — All thresholds nominal`, time })
+            }
+
             setNodes(prev => {
-              try {
-                const existing = prev[id] ?? makeNode(id)
-                const nextNode = {
-                  ...existing,
+              const ex = prev[id] ?? makeNode(id)
+              return {
+                ...prev,
+                [id]: {
+                  ...ex,
                   ...data,
                   online: true,
-                  mode: data.mode ?? (existing.mode === 'offline' ? 'wifi' : (existing.mode ?? 'wifi')),
+                  mode: incomingMode,
                   lastSeen: Date.now(),
-                  fireDetected: Boolean(data.fireDetected),
-                }
-
-                // Independent breach detection
-                const tempVal = Number(nextNode.temp ?? 0)
-                const smokeVal = Number(nextNode.smoke ?? 0)
-                
-                const isTempAlert  = tempVal > TEMP_ALARM
-                const isSmokeAlert = smokeVal > SMOKE_ALARM
-                const isFireAlert  = nextNode.fireDetected
-
-                const wasTempAlert  = Number(existing.temp ?? 0) > TEMP_ALARM
-                const wasSmokeAlert = Number(existing.smoke ?? 0) > SMOKE_ALARM
-                const wasFireAlert  = existing.fireDetected
-
-                const wasAlert = existing.alertActive
-                nextNode.alertActive = isTempAlert || isSmokeAlert || isFireAlert
-
-                // Trigger alert if ANY threshold is newly crossed
-                if ((isTempAlert && !wasTempAlert) || (isSmokeAlert && !wasSmokeAlert) || (isFireAlert && !wasFireAlert)) {
-                  let cause = []
-                  if (isTempAlert && !wasTempAlert)   cause.push(`HIGH TEMP (${tempVal.toFixed(1)}°C)`)
-                  if (isSmokeAlert && !wasSmokeAlert) cause.push(`HIGH SMOKE (${smokeVal.toFixed(1)} PPM)`)
-                  if (isFireAlert && !wasFireAlert)   cause.push('FIRE DETECTED')
-
-                  const displayId = String(id).toUpperCase()
-                  pushAlerts([{
-                    sev: 'high',
-                    msg: `${displayId} FLAGGED: ${cause.join(' & ')}`,
-                    time: new Date().toLocaleTimeString(),
-                  }])
-                }
-
-                // Recovery detection
-                if (wasAlert && !nextNode.alertActive) {
-                  pushAlerts([{
-                    sev: 'info',
-                    msg: `${String(id).toUpperCase()}: RECOVERED — All thresholds nominal`,
-                    time: new Date().toLocaleTimeString(),
-                  }])
-                }
-
-                return { ...prev, [id]: nextNode }
-              } catch (err) {
-                console.error("Critical error updating node state:", err)
-                return prev
+                  fireDetected: fireVal,
+                  alertActive: nextAlertActive,
+                },
               }
             })
+
+            if (pendingAlerts.length) pushAlerts(pendingAlerts)
           }
 
           if (topic.includes('/alert/') || topic.startsWith('alert/')) {
@@ -221,14 +237,23 @@ export function useDashboard() {
     return () => mqttRef.current?.end()
   }, [appendHistory, makeNode, pushAlerts])
 
-  // ── EFFECT for HISTORY ─────────────────────────────────────────────────────
+  // ── EFFECT for HISTORY + nodesRef sync ────────────────────────────────────
   const isInitialMount = useRef(true)
   useEffect(() => {
+    nodesRef.current = nodes
+
     // Skip the initial render to prevent duplicate history on mount
     if (isInitialMount.current) {
       isInitialMount.current = false
     } else {
       appendHistory(nodes)
+    }
+
+    // Persist known node identities so they survive page refresh
+    if (USE_REAL_MQTT && Object.keys(nodes).length > 0) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(nodes))
+      } catch { /* quota exceeded or private browsing — silently skip */ }
     }
   }, [nodes, appendHistory])
 
@@ -277,42 +302,47 @@ export function useDashboard() {
   // ── WATCHDOG: Mark nodes offline if no heartbeat for 60s ───────────────────
   useEffect(() => {
     const interval = setInterval(() => {
-      const newlyOffline = []
-      setNodes(prev => {
-        const now = Date.now()
-        let changed = false
-        const next = { ...prev }
-
-        Object.keys(next).forEach(id => {
-          const node = next[id]
-          // If online and hasn't been seen in 60s (2 missed heartbeats)
-          if (node.online && node.lastSeen && (now - node.lastSeen > 60000)) {
-            next[id] = { ...node, online: false, mode: 'offline' }
-            newlyOffline.push(id)
-            changed = true
-          }
-        })
-        return changed ? next : prev
+      const now = Date.now()
+      // Read current node state via ref — avoids relying on updater side effects
+      const newlyOffline = Object.keys(nodesRef.current).filter(id => {
+        const node = nodesRef.current[id]
+        const timeout = node.mode === 'lora' ? 120000 : 60000
+        return node.online && node.lastSeen && (now - node.lastSeen > timeout)
       })
 
-      if (newlyOffline.length) {
-        const time = new Date().toLocaleTimeString()
-        pushAlerts(newlyOffline.map(id => ({
-          sev: 'med',
-          msg: `${id.toUpperCase()}: OFFLINE (no heartbeat > 60s)`,
-          time,
-        })))
-      }
+      if (!newlyOffline.length) return
+
+      setNodes(prev => {
+        const next = { ...prev }
+        newlyOffline.forEach(id => {
+          next[id] = { ...prev[id], online: false, mode: 'offline' }
+        })
+        return next
+      })
+
+      const time = new Date().toLocaleTimeString()
+      pushAlerts(newlyOffline.map(id => ({
+        sev: 'high',
+        msg: `${id.toUpperCase()}: OFFLINE (no heartbeat > 60s)`,
+        time,
+      })))
     }, 10000) // Run check every 10 seconds
 
     return () => clearInterval(interval)
   }, [pushAlerts])
+
+  const clearNodes = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY)
+    setNodes({})
+    setHistory({})
+  }, [])
 
   return {
     nodes, history, alerts,
     failoverActive,
     simulateFailover,
     recoverNode,
+    clearNodes,
     useMqtt: USE_REAL_MQTT,
   }
 }

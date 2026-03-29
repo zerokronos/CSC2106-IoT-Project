@@ -6,18 +6,18 @@
 // TTN OTAA IDs / Keys (FOR TRAVIS NEO)
 // =====================================================
 
-// APPEUI: 0000000000000000 (LSB)
+// APPEUI: 0000000000000000 (LSB) Standard, do not change, input this in end devices
 static const u1_t PROGMEM APPEUI[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 void os_getArtEui(u1_t* buf) { memcpy_P(buf, APPEUI, 8); }
 
-// DEVEUI: 70B3D57ED0076364 (Reversed to LSB for LMIC)
-static const u1_t PROGMEM DEVEUI[8] = { 0x64, 0x63, 0x07, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 };
+// DEVEUI: 70B3D57ED0076901 (Reversed to LSB for LMIC) Get from TTN create new end evice
+static const u1_t PROGMEM DEVEUI[8] = { 0x01, 0x69, 0x07, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 };
 void os_getDevEui(u1_t* buf) { memcpy_P(buf, DEVEUI, 8); }
 
-// APPKEY: 4B9DBB82AE799FB63B02C5DB3F68915E (MSB - No change)
-static const u1_t PROGMEM APPKEY[16] = { 
-  0x4B, 0x9D, 0xBB, 0x82, 0xAE, 0x79, 0x9F, 0xB6,
-  0x3B, 0x02, 0xC5, 0xDB, 0x3F, 0x68, 0x91, 0x5E
+// APPKEY: AC5F79AEDDCC73CBEF164B6509CECEF0 (MSB - No change) Get from TTN create new end evice
+static const u1_t PROGMEM APPKEY[16] = {
+  0xAC, 0x5F, 0x79, 0xAE, 0xDD, 0xCC, 0x73, 0xCB,
+  0xEF, 0x16, 0x4B, 0x65, 0x09, 0xCE, 0xCE, 0xF0
 };
 void os_getDevKey(u1_t* buf) { memcpy_P(buf, APPKEY, 16); }
 
@@ -32,7 +32,7 @@ const lmic_pinmap lmic_pins = {
 };
 
 static bool joined = false;
-static uint8_t default_node_id = 2; 
+static uint8_t default_node_id = 1; // Change Base on flat number
 static bool lora_mode_enabled = false;
 
 // Simulated sensor data stream sent to Pico W over UART.
@@ -62,7 +62,7 @@ void queue_uplink(uint8_t node_id, uint8_t msg_type, uint16_t temp_x10, uint16_t
   Serial.println(F("Uplink Queued. Check TTN Console."));
 }
 
-static void emit_uart_telemetry(uint8_t node_id, uint16_t temp_x10, uint16_t smoke_x100) {
+static void emit_uart_telemetry(uint8_t node_id, uint16_t temp_x10, uint16_t smoke_x100, uint8_t fire) {
   Serial.print(F("{\"node_id\":"));
   Serial.print(node_id);
   Serial.print(F(",\"msg_type\":1,\"temp\":"));
@@ -77,7 +77,9 @@ static void emit_uart_telemetry(uint8_t node_id, uint16_t temp_x10, uint16_t smo
     Serial.print('0');
   }
   Serial.print(smoke_frac);
-  Serial.println(F(",\"fire\":0}"));
+  Serial.print(F(",\"fire\":"));
+  Serial.print(fire);
+  Serial.println(F("}"));
 }
 
 static void handle_pico_commands() {
@@ -124,10 +126,16 @@ void onEvent(ev_t ev) {
   }
 }
 
+#define FIRE_SIM_PIN    9   // INPUT_PULLUP — reads LOW when fire active
+#define FIRE_SIM_GND    3   // OUTPUT LOW — connect to pin 9 to trigger fire
+
 void setup() {
   Serial.begin(9600);
   while (!Serial) {}
 
+  pinMode(FIRE_SIM_PIN, INPUT_PULLUP);
+  pinMode(FIRE_SIM_GND, OUTPUT);
+  digitalWrite(FIRE_SIM_GND, LOW);
   Serial.println(F("=== Starting LoRaWAN Node (AU915 FSB2) ==="));
 
   os_init();
@@ -155,24 +163,35 @@ void loop() {
   os_runloop_once();
   handle_pico_commands();
 
+  bool fire_sim = (digitalRead(FIRE_SIM_PIN) == LOW);
+
   // Produce simulated telemetry for Pico W every 3 seconds while in WiFi path.
   static unsigned long lastMs = 0;
   if (!lora_mode_enabled && (millis() - lastMs > 3000)) {
     lastMs = millis();
-    uint16_t t = SIM_TEMP_X10[sim_idx];
-    uint16_t s = SIM_SMOKE_X100[sim_idx];
-    sim_idx = (uint8_t)((sim_idx + 1) % (sizeof(SIM_TEMP_X10) / sizeof(SIM_TEMP_X10[0])));
-    emit_uart_telemetry(default_node_id, t, s);
+    uint16_t t, s;
+    uint8_t fire_flag;
+    if (fire_sim) {
+      t = 655; s = 11000; fire_flag = 1;
+    } else {
+      t = SIM_TEMP_X10[sim_idx]; s = SIM_SMOKE_X100[sim_idx]; fire_flag = 0;
+      sim_idx = (uint8_t)((sim_idx + 1) % (sizeof(SIM_TEMP_X10) / sizeof(SIM_TEMP_X10[0])));
+    }
+    emit_uart_telemetry(default_node_id, t, s, fire_flag);
   }
 
   // During failover, send directly over LoRa every 30 seconds once joined.
   static unsigned long lastLoraMs = 0;
   if (lora_mode_enabled && joined && (millis() - lastLoraMs > 30000)) {
     lastLoraMs = millis();
-    uint16_t t = SIM_TEMP_X10[sim_idx];
-    uint16_t s = SIM_SMOKE_X100[sim_idx];
-    sim_idx = (uint8_t)((sim_idx + 1) % (sizeof(SIM_TEMP_X10) / sizeof(SIM_TEMP_X10[0])));
-    lastMs = millis();
-    queue_uplink(default_node_id, 1, t, s, 0);
+    uint16_t t, s;
+    uint8_t fire_flag;
+    if (fire_sim) {
+      t = 655; s = 11000; fire_flag = 1;
+    } else {
+      t = SIM_TEMP_X10[sim_idx]; s = SIM_SMOKE_X100[sim_idx]; fire_flag = 0;
+      sim_idx = (uint8_t)((sim_idx + 1) % (sizeof(SIM_TEMP_X10) / sizeof(SIM_TEMP_X10[0])));
+    }
+    queue_uplink(default_node_id, 1, t, s, fire_flag);
   }
 }
