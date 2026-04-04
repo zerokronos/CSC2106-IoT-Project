@@ -164,34 +164,45 @@ void loop() {
   handle_pico_commands();
 
   bool fire_sim = (digitalRead(FIRE_SIM_PIN) == LOW);
+  static bool prev_fire_sim = false;
+  bool fire_just_detected = fire_sim && !prev_fire_sim;
 
-  // Produce simulated telemetry for Pico W every 3 seconds while in WiFi path.
+  // WiFi path: normal 3s telemetry; immediate + 500ms repeat on fire.
   static unsigned long lastMs = 0;
-  if (!lora_mode_enabled && (millis() - lastMs > 3000)) {
-    lastMs = millis();
-    uint16_t t, s;
-    uint8_t fire_flag;
-    if (fire_sim) {
-      t = 655; s = 11000; fire_flag = 1;
-    } else {
-      t = SIM_TEMP_X10[sim_idx]; s = SIM_SMOKE_X100[sim_idx]; fire_flag = 0;
-      sim_idx = (uint8_t)((sim_idx + 1) % (sizeof(SIM_TEMP_X10) / sizeof(SIM_TEMP_X10[0])));
+  if (!lora_mode_enabled) {
+    unsigned long wifi_interval = fire_sim ? 500UL : 3000UL;
+    if (fire_just_detected || (millis() - lastMs > wifi_interval)) {
+      lastMs = millis();
+      uint16_t t, s;
+      uint8_t fire_flag;
+      if (fire_sim) {
+        t = 655; s = 11000; fire_flag = 1;
+      } else {
+        t = SIM_TEMP_X10[sim_idx]; s = SIM_SMOKE_X100[sim_idx]; fire_flag = 0;
+        sim_idx = (uint8_t)((sim_idx + 1) % (sizeof(SIM_TEMP_X10) / sizeof(SIM_TEMP_X10[0])));
+      }
+      emit_uart_telemetry(default_node_id, t, s, fire_flag);
     }
-    emit_uart_telemetry(default_node_id, t, s, fire_flag);
   }
 
-  // During failover, send directly over LoRa every 30 seconds once joined.
+  // LoRa path: normal 30s; on fire, re-queue as fast as duty cycle allows
+  // (queue_uplink skips if OP_TXRXPEND; LMIC enforces duty cycle internally).
   static unsigned long lastLoraMs = 0;
-  if (lora_mode_enabled && joined && (millis() - lastLoraMs > 30000)) {
-    lastLoraMs = millis();
-    uint16_t t, s;
-    uint8_t fire_flag;
-    if (fire_sim) {
-      t = 655; s = 11000; fire_flag = 1;
-    } else {
-      t = SIM_TEMP_X10[sim_idx]; s = SIM_SMOKE_X100[sim_idx]; fire_flag = 0;
-      sim_idx = (uint8_t)((sim_idx + 1) % (sizeof(SIM_TEMP_X10) / sizeof(SIM_TEMP_X10[0])));
+  if (lora_mode_enabled && joined) {
+    unsigned long lora_interval = fire_sim ? 0UL : 30000UL;
+    if (fire_just_detected || (millis() - lastLoraMs > lora_interval)) {
+      lastLoraMs = millis();
+      uint16_t t, s;
+      uint8_t fire_flag;
+      if (fire_sim) {
+        t = 655; s = 11000; fire_flag = 1;
+      } else {
+        t = SIM_TEMP_X10[sim_idx]; s = SIM_SMOKE_X100[sim_idx]; fire_flag = 0;
+        sim_idx = (uint8_t)((sim_idx + 1) % (sizeof(SIM_TEMP_X10) / sizeof(SIM_TEMP_X10[0])));
+      }
+      queue_uplink(default_node_id, 1, t, s, fire_flag);
     }
-    queue_uplink(default_node_id, 1, t, s, fire_flag);
   }
+
+  prev_fire_sim = fire_sim;
 }
