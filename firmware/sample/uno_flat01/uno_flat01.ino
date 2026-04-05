@@ -34,6 +34,8 @@ const lmic_pinmap lmic_pins = {
 static bool joined = false;
 static uint8_t default_node_id = 1; 
 static bool lora_mode_enabled = false;
+static unsigned long last_pico_contact_ms = 0;
+static const unsigned long PICO_KEEPALIVE_TIMEOUT_MS = 6000;
 
 // Simulated sensor data stream sent to Pico W over UART.
 static const uint16_t SIM_TEMP_X10[] = { 248, 252, 259, 265, 272, 280, 288, 295 };
@@ -83,20 +85,29 @@ static void emit_uart_telemetry(uint8_t node_id, uint16_t temp_x10, uint16_t smo
 }
 
 static void handle_pico_commands() {
-  if (!Serial.available()) {
-    return;
-  }
+  while (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    cmd.toUpperCase();
 
-  String cmd = Serial.readStringUntil('\n');
-  cmd.trim();
-  cmd.toUpperCase();
+    if (cmd.length() == 0) {
+      continue;
+    }
 
-  if (cmd == "LORA_ON" || cmd == "LORA_ENABLE") {
-    lora_mode_enabled = true;
-    Serial.println(F("{\"ack\":\"LORA_ON\"}"));
-  } else if (cmd == "LORA_OFF" || cmd == "LORA_DISABLE") {
-    lora_mode_enabled = false;
-    Serial.println(F("{\"ack\":\"LORA_OFF\"}"));
+    last_pico_contact_ms = millis();
+
+    if (cmd == "PICO_HELLO" || cmd == "PICO_ONLINE") {
+      if (lora_mode_enabled) {
+        lora_mode_enabled = false;
+        Serial.println(F("Pico keepalive restored WiFi mode."));
+      }
+    } else if (cmd == "LORA_ON" || cmd == "LORA_ENABLE") {
+      lora_mode_enabled = true;
+      Serial.println(F("{\"ack\":\"LORA_ON\"}"));
+    } else if (cmd == "LORA_OFF" || cmd == "LORA_DISABLE") {
+      lora_mode_enabled = false;
+      Serial.println(F("{\"ack\":\"LORA_OFF\"}"));
+    }
   }
 }
 
@@ -132,6 +143,7 @@ void onEvent(ev_t ev) {
 void setup() {
   Serial.begin(9600);
   while (!Serial) {}
+  last_pico_contact_ms = millis();
 
   pinMode(FIRE_SIM_PIN, INPUT_PULLUP);
   pinMode(FIRE_SIM_GND, OUTPUT);
@@ -205,4 +217,9 @@ void loop() {
   }
 
   prev_fire_sim = fire_sim;
+
+  if (!lora_mode_enabled && (millis() - last_pico_contact_ms > PICO_KEEPALIVE_TIMEOUT_MS)) {
+    lora_mode_enabled = true;
+    Serial.println(F("Pico keepalive timed out. Switching to LoRa mode."));
+  }
 }

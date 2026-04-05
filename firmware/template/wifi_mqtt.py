@@ -3,6 +3,7 @@ import time
 import json
 import ubinascii
 import random
+import usocket as socket
 from machine import UART, Pin
 from umqtt.simple import MQTTClient
 
@@ -24,9 +25,12 @@ TOPIC_TELEMETRY = b"telemetry/site1/" + NODE_ID.encode() # Main data channel
 TOPIC_HEARTBEAT = b"heartbeat/site1/" + NODE_ID.encode()
 HEARTBEAT_INTERVAL = 10 # Seconds between keep-alive signals
 MAX_RETRIES = 3
+MQTT_TOTAL_WINDOW_MS = 6000
+MQTT_CONNECT_TIMEOUT_S = 2
 MAX_UART_LINE_BYTES = 256
 SIMULATION_MODE = False  # Set to False when Arduino is connected
 SIMULATION_INTERVAL = 10  # Send simulated data every N seconds
+PICO_KEEPALIVE_INTERVAL = 2  # Seconds between UART keepalive messages to Uno
 
 # --- 2. HARDWARE SETUP ---
 # UART 0: TX=GP0, RX=GP1 (9600 baud to match Arduino)
@@ -41,6 +45,7 @@ last_button_press_time = 0
 DEBOUNCE_MS = 200 # 200ms debounce time
 last_simulation_time = 0  # Track simulation data sending
 test_data_index = 0  # Index for cycling through test data
+last_pico_keepalive = 0
 
 # --- 3. FUNCTIONS ---
 
@@ -86,24 +91,37 @@ def publish_mqtt_safe(topic, payload):
         print("Manual Override: Simulating WiFi Failure")
         return False
 
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            print(f"MQTT Attempt {attempt}/{MAX_RETRIES}...")
-            client = MQTTClient(CLIENT_ID, MQTT_BROKER, keepalive=10)
-            client.connect()
-            client.publish(topic, payload)
-            client.disconnect()
-            print("Publish Success")
-            return True
-        except Exception as e:
-            print(f"Publish Failed: {e}")
-            time.sleep(1) # Wait 1s before retry
-            
-            # Attempt to reconnect WiFi if it dropped
-            if not network.WLAN(network.STA_IF).isconnected():
-                print("WiFi dropped, reconnecting...")
-                connect_wifi()
-                
+    start_ms = time.ticks_ms()
+    previous_timeout = None
+    has_setdefault = hasattr(socket, "setdefaulttimeout")
+    if has_setdefault:
+        if hasattr(socket, "getdefaulttimeout"):
+            previous_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(MQTT_CONNECT_TIMEOUT_S)
+
+    try:
+        for attempt in range(1, MAX_RETRIES + 1):
+            elapsed_ms = time.ticks_diff(time.ticks_ms(), start_ms)
+            if elapsed_ms >= MQTT_TOTAL_WINDOW_MS:
+                break
+
+            try:
+                print(f"MQTT Attempt {attempt}/{MAX_RETRIES}...")
+                client = MQTTClient(CLIENT_ID, MQTT_BROKER, keepalive=10)
+                client.connect()
+                client.publish(topic, payload)
+                client.disconnect()
+                print("Publish Success")
+                return True
+            except Exception as e:
+                print(f"Publish Failed: {e}")
+                if attempt < MAX_RETRIES and not network.WLAN(network.STA_IF).isconnected():
+                    print("WiFi dropped, reconnecting...")
+                    connect_wifi()
+    finally:
+        if has_setdefault:
+            socket.setdefaulttimeout(previous_timeout)
+
     return False
 
 def send_heartbeat():
@@ -131,6 +149,10 @@ def send_heartbeat():
         client.publish(TOPIC_HEARTBEAT, payload)
         print("Heartbeat sent.")
         client.disconnect()
+
+        # WiFi+MQTT confirmed working — exit LoRa failover if active
+        if not SIMULATION_MODE:
+            set_uno_lora_mode(False)
     except Exception as e:
         print(f"Heartbeat Failed: {e}")
 
@@ -218,10 +240,33 @@ def set_uno_lora_mode(enable):
     lora_failover_active = enable
     print(f"Sent to Uno: {cmd.strip()}")
 
+
+def send_pico_keepalive(force=False):
+    """Tell the Uno this Pico is alive and WiFi-capable."""
+    global last_pico_keepalive
+
+    if manual_lora_override:
+        return
+
+    wlan = network.WLAN(network.STA_IF)
+    if not wlan.isconnected():
+        return
+
+    now = time.time()
+    if not force and (now - last_pico_keepalive) < PICO_KEEPALIVE_INTERVAL:
+        return
+
+    try:
+        uart.write("PICO_HELLO\n")
+        last_pico_keepalive = now
+    except Exception as e:
+        print(f"Failed to send Pico keepalive: {e}")
+
 # --- 4. MAIN LOOP ---
 
 # Initial connection
-connect_wifi()
+if connect_wifi():
+    send_pico_keepalive(force=True)
 print("System Online. Monitoring Arduino sensor data...")
 
 last_heartbeat = time.time()
@@ -288,30 +333,34 @@ while True:
             "temp": data.get("temp", 0),
             "smoke": data.get("smoke", 0),
             "fire_detected": data.get("fire", 0),
-            "mode": "wifi",
+            "mode": "lora" if lora_failover_active else "wifi",
             "ts": time.time()
         })
         
         print(f"Sending Telemetry: {payload}")
         # Attempt to send via WiFi (with Retries)
         success = publish_mqtt_safe(TOPIC_TELEMETRY, payload)
-        
+
         if success:
-            # MQTT is back/online -> Tell Uno to STOP LoRa
+            # MQTT is back/online -> Tell Uno to STOP LoRa (only if state changed)
             print("WiFi Success -> Sending LORA_OFF")
             if not SIMULATION_MODE:
-                uart.write("LORA_OFF\n")
+                set_uno_lora_mode(False)
             led.on()
         else:
-            # After N times unsuccessfully -> Tell Uno to START LoRa
+            # After N times unsuccessfully -> Tell Uno to START LoRa (only if state changed)
             print("WiFi Failed -> Sending LORA_ON")
             if not SIMULATION_MODE:
-                uart.write("LORA_ON\n")
+                set_uno_lora_mode(True)
             led.off()
 
     # Periodic check to ensure the Pico stays connected to WiFi
     if not network.WLAN(network.STA_IF).isconnected():
-        connect_wifi()
+        if connect_wifi():
+            send_pico_keepalive(force=True)
+
+    # UART keepalive so the Uno can detect Pico power loss and recovery.
+    send_pico_keepalive()
 
     # Periodic Heartbeat
     if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
