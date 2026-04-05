@@ -1,11 +1,5 @@
 # INF2007-IoT-Project-
 
-## Links
-
-- Final Report (Google Docs): `<add-report-link>`
-- Poster: `<add-poster-link>`
-- Demo Video: `<add-demo-video-link>`
-
 ## Repo Structure
 
 - `firmware/sample/`: Embedded node firmware source and node-side scripts.
